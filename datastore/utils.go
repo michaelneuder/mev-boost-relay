@@ -1,9 +1,11 @@
 package datastore
 
-func MakeBlockBuilderStatus(isHighPrio, isBlacklisted bool) BlockBuilderStatus {
-	if isBlacklisted {
+func MakeBlockBuilderStatus(s BlockBuilderStatus) BlockBuilderStatusStr {
+	if s.Blacklisted {
 		return RedisBlockBuilderStatusBlacklisted
-	} else if isHighPrio {
+	} else if s.Optimistic {
+		return RedisBlockBuilderStatusOptimistic
+	} else if s.HighPrio {
 		return RedisBlockBuilderStatusHighPrio
 	} else {
 		return RedisBlockBuilderStatusLowPrio
