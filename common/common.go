@@ -21,3 +21,12 @@ type HTTPServerTimeouts struct {
 	Write      time.Duration // Timeout for writes. None if 0.
 	Idle       time.Duration // Timeout to disconnect idle client connections. None if 0.
 }
+
+type BlockBuilderStatusCode uint8
+
+const (
+	LowPrio BlockBuilderStatusCode = iota
+	HighPrio
+	Optimistic
+	Blacklisted
+)

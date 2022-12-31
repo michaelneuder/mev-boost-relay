@@ -41,22 +41,13 @@ var (
 	RedisBlockBuilderStatusBlacklisted BlockBuilderStatus = "blacklisted"
 )
 
-type BlockBuilderStatusCode uint64
-
-const (
-	LowPrio BlockBuilderStatusCode = iota
-	HighPrio
-	Optimistic
-	Blacklisted
-)
-
-func (b BlockBuilderStatusCode) String() string {
+func StatusStringFromCode(b common.BlockBuilderStatusCode) string {
 	switch b {
-	case Optimistic:
+	case common.Optimistic:
 		return string(RedisBlockBuilderStatusOptimistic)
-	case HighPrio:
+	case common.HighPrio:
 		return string(RedisBlockBuilderStatusHighPrio)
-	case Blacklisted:
+	case common.Blacklisted:
 		return string(RedisBlockBuilderStatusBlacklisted)
 	default:
 		return string(RedisBlockBuilderStatusLowPrio)
@@ -350,20 +341,20 @@ func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status BlockBui
 	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, string(status)).Err()
 }
 
-func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code BlockBuilderStatusCode, err error) {
+func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code common.BlockBuilderStatusCode, err error) {
 	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderStatus, builderPubkey).Result()
 	if errors.Is(err, redis.Nil) {
 		return code, nil
 	}
 	switch status := BlockBuilderStatus(res); status {
 	case RedisBlockBuilderStatusHighPrio:
-		return HighPrio, nil
+		return common.HighPrio, nil
 	case RedisBlockBuilderStatusOptimistic:
-		return Optimistic, nil
+		return common.Optimistic, nil
 	case RedisBlockBuilderStatusBlacklisted:
-		return Blacklisted, nil
+		return common.Blacklisted, nil
 	default:
-		return LowPrio, nil
+		return common.LowPrio, nil
 	}
 }
 

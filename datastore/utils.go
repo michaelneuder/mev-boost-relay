@@ -1,12 +1,14 @@
 package datastore
 
-func MakeBlockBuilderStatus(c BlockBuilderStatusCode) BlockBuilderStatus {
+import "github.com/flashbots/mev-boost-relay/common"
+
+func MakeBlockBuilderStatus(c common.BlockBuilderStatusCode) BlockBuilderStatus {
 	switch c {
-	case HighPrio:
+	case common.HighPrio:
 		return RedisBlockBuilderStatusHighPrio
-	case Optimistic:
+	case common.Optimistic:
 		return RedisBlockBuilderStatusOptimistic
-	case Blacklisted:
+	case common.Blacklisted:
 		return RedisBlockBuilderStatusBlacklisted
 	default:
 		return RedisBlockBuilderStatusLowPrio

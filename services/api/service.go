@@ -98,12 +98,21 @@ type randaoHelper struct {
 	prevRandao string
 }
 
-// Contains necessary elements to issue a block validation request.
+// Data needed to issue a block validation request.
 type blockSimOptions struct {
 	ctx      context.Context
 	highPrio bool
 	log      *logrus.Entry
 	req      *BuilderBlockValidationRequest
+}
+
+// Data needed to initiate a proposer refund.
+type proposerRefundOptions struct {
+	proposerPK string
+	builderPK  string
+	amount     types.U256Str
+	slot       uint64
+	bidTrace   types.BidTrace
 }
 
 // RelayAPI represents a single Relay instance
@@ -148,7 +157,9 @@ type RelayAPI struct {
 	expectedPrevRandaoLock     sync.RWMutex
 	expectedPrevRandaoUpdating uint64
 
+	// Channel used to process optimistic blocks asynchronously.
 	optimisticBlockC chan blockSimOptions
+	proposerRefundC  chan proposerRefundOptions
 }
 
 // NewRelayAPI creates a new service. if builders is nil, allow any builder
@@ -207,6 +218,8 @@ func NewRelayAPI(opts RelayAPIOpts) (api *RelayAPI, err error) {
 
 		activeValidatorC: make(chan types.PubkeyHex, 450_000),
 		validatorRegC:    make(chan types.SignedValidatorRegistration, 450_000),
+		optimisticBlockC: make(chan blockSimOptions, 450_000),
+		proposerRefundC:  make(chan proposerRefundOptions, 450_000),
 	}
 
 	if os.Getenv("FORCE_GET_HEADER_204") == "1" {
@@ -296,6 +309,9 @@ func (api *RelayAPI) StartServer() (err error) {
 	if api.opts.BlockBuilderAPI {
 		// Get current proposer duties blocking before starting, to have them ready
 		api.updateProposerDuties(bestSyncStatus.HeadSlot)
+
+		// TODO(mikeneuder): consider if we should use >1 optimisticBlockProcessors.
+		go api.startOptimisticBlockProcessor()
 	}
 
 	// start things specific for the proposer API
@@ -315,7 +331,8 @@ func (api *RelayAPI) StartServer() (err error) {
 			go api.startValidatorRegistrationDBProcessor()
 		}
 
-		go api.startOptimisticBlockProcessor()
+		// TODO(mikeneuder): consider if we should use >1 proposerRefundProcessors.
+		go api.startProposerRefundProcessor()
 	}
 
 	// Process current slot
@@ -328,6 +345,8 @@ func (api *RelayAPI) StartServer() (err error) {
 		for {
 			headEvent := <-c
 			api.processNewSlot(headEvent.Slot)
+			// TODO(mikeneuder): Add checks to make sure we haven't
+			// optimistically built on top of a non-simulated slot.
 		}
 	}()
 
@@ -393,6 +412,7 @@ func (api *RelayAPI) startValidatorRegistrationDBProcessor() {
 	}
 }
 
+// simulateBlock sends a request for a block simulation to blockSimRateLimiter.
 func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	t := time.Now()
 	simErr := api.blockSimRateLimiter.send(opts.ctx, opts.req, opts.highPrio)
@@ -411,24 +431,36 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	return simErr
 }
 
-// startOptimisticBlockProcessor keeps listening on the channel and validating incoming blocks asynchronously
+// startOptimisticBlockProcessor keeps listening on the channel and validating incoming blocks asynchronously.
 func (api *RelayAPI) startOptimisticBlockProcessor() {
 	for opts := range api.optimisticBlockC {
 		err := api.simulateBlock(opts)
 		if err != nil {
 			// Validation failed, mark the status of the builder as lowPrio (pessemistic).
-			newStatus := datastore.MakeBlockBuilderStatus(datastore.LowPrio)
+			newStatus := datastore.MakeBlockBuilderStatus(common.LowPrio)
 			builderPubKey := opts.req.Message.BuilderPubkey.String()
 			err := api.redis.SetBlockBuilderStatus(builderPubKey, newStatus)
 			if err != nil {
 				api.log.WithError(err).Error("could not set block builder status in redis")
 			}
 
-			err = api.db.SetBlockBuilderStatus(builderPubKey, false /*isHighPrio*/, false /*isBlacklisted*/)
+			err = api.db.SetBlockBuilderStatus(builderPubKey, common.LowPrio)
 			if err != nil {
 				api.log.WithError(err).Error("could not set block builder status in database")
 			}
 		}
+	}
+}
+
+// startProposerRefundProcessor keeps listening on the channel and issuing proposer refunds.
+func (api *RelayAPI) startProposerRefundProcessor() {
+	for opts := range api.proposerRefundC {
+		// TODO(mikeneuder): Implement refund logic.
+		api.log.WithFields(logrus.Fields{
+			"proposerPK": opts.proposerPK,
+			"builderPK":  opts.builderPK,
+			"amount":     opts.amount,
+		}).Info("Received proposer refund event.")
 	}
 }
 
@@ -881,6 +913,30 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		if err != nil {
 			log.WithError(err).Error("failed to increment builder-stats after getPayload")
 		}
+
+		simErr := api.simulateBlock(blockSimOptions{
+			ctx:      req.Context(),
+			log:      log,
+			highPrio: true, // manually set to true for these blocks.
+			req: &BuilderBlockValidationRequest{
+				BuilderSubmitBlockRequest: types.BuilderSubmitBlockRequest{
+					Signature:        payload.Signature,
+					Message:          &bidTrace.BidTrace,
+					ExecutionPayload: getPayloadResp.Data,
+				},
+			},
+		})
+		if simErr != nil {
+			log.WithError(err).Error("failed to simulate signed block")
+			api.proposerRefundC <- proposerRefundOptions{
+				// Both PKs are hex strings.
+				proposerPK: proposerPubkey.String(),
+				builderPK:  bidTrace.BuilderPubkey.PubkeyHex().String(),
+				amount:     bidTrace.Value,
+				slot:       slot,
+				bidTrace:   bidTrace.BidTrace,
+			}
+		}
 	}()
 
 	// Publish the signed beacon block via beacon-node
@@ -891,13 +947,6 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		}
 		signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
 		_, _ = api.beaconClient.PublishBlock(signedBeaconBlock) // errors are logged inside.
-		// Analyze published blocks for invalid blocks aysnchronously.
-		// Plan:
-		//   1. Write blocks to an OptimisticPublishedBlocks channel.
-		//   2. A separate thread will read from the channel and distribute work
-		//      to the validating nodes.
-		//   3. If any published block is determined to be invalid, we update
-		//      the builder status to low-prio and calculate reimbursement.
 	}()
 }
 
@@ -1006,7 +1055,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	builderStatusCode, err := api.redis.GetBlockBuilderStatus(payload.Message.BuilderPubkey.String())
 	log = log.WithFields(logrus.Fields{
 		"builderStatus":    builderStatusCode,
-		"builderStatusStr": builderStatusCode.String(),
+		"builderStatusStr": datastore.StatusStringFromCode(builderStatusCode),
 	})
 	if err != nil {
 		log.WithError(err).Error("could not get block builder status")
@@ -1043,7 +1092,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	if builderStatusCode == datastore.Blacklisted {
+	if builderStatusCode == common.Blacklisted {
 		log.Info("builder is blacklisted")
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -1051,7 +1100,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// In case only high-prio requests are accepted, fail others
-	if api.ffDisableLowPrioBuilders && builderStatusCode != datastore.HighPrio {
+	if api.ffDisableLowPrioBuilders && builderStatusCode != common.HighPrio {
 		log.Info("rejecting low-prio builder (ff-disable-low-prio-builders)")
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -1060,7 +1109,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	log = log.WithFields(logrus.Fields{
 		"builderStatus":    builderStatusCode,
-		"builderStatusStr": builderStatusCode.String(),
+		"builderStatusStr": datastore.StatusStringFromCode(builderStatusCode),
 		"proposerPubkey":   payload.Message.ProposerPubkey.String(),
 		"parentHash":       payload.Message.ParentHash.String(),
 		"value":            payload.Message.Value.String(),
@@ -1130,7 +1179,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	// Construct simulation request.
 	opts := blockSimOptions{
 		ctx:      req.Context(),
-		highPrio: builderStatusCode == datastore.HighPrio,
+		highPrio: builderStatusCode == common.HighPrio,
 		log:      log,
 		req: &BuilderBlockValidationRequest{
 			BuilderSubmitBlockRequest: *payload,
@@ -1139,7 +1188,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// Only perform simulation on hot path if we are in non-optimistic mode.
-	if builderStatusCode != datastore.Optimistic {
+	if builderStatusCode != common.Optimistic {
 		simErr = api.simulateBlock(opts)
 		if simErr != nil {
 			api.RespondError(w, http.StatusBadRequest, simErr.Error())
@@ -1265,13 +1314,13 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 			"isHighPrio":    isHighPrio,
 			"isBlacklisted": isBlacklisted,
 		}).Info("updating builder status")
-		code := datastore.LowPrio
+		code := common.LowPrio
 		if isBlacklisted {
-			code = datastore.Blacklisted
+			code = common.Blacklisted
 		} else if isOptimistic {
-			code = datastore.Optimistic
+			code = common.Optimistic
 		} else if isHighPrio {
-			code = datastore.HighPrio
+			code = common.HighPrio
 		}
 		newStatus := datastore.MakeBlockBuilderStatus(code)
 		err := api.redis.SetBlockBuilderStatus(builderPubkey, newStatus)
@@ -1279,7 +1328,7 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 			api.log.WithError(err).Error("could not set block builder status in redis")
 		}
 
-		err = api.db.SetBlockBuilderStatus(builderPubkey, isHighPrio, isBlacklisted)
+		err = api.db.SetBlockBuilderStatus(builderPubkey, code)
 		if err != nil {
 			api.log.WithError(err).Error("could not set block builder status in database")
 		}

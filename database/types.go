@@ -188,9 +188,7 @@ type BlockBuilderEntry struct {
 	BuilderPubkey string `db:"builder_pubkey" json:"builder_pubkey"`
 	Description   string `db:"description"    json:"description"`
 
-	IsOptimistic  bool `db:"is_optimistic"   json:"is_optimistic"`
-	IsHighPrio    bool `db:"is_high_prio"   json:"is_high_prio"`
-	IsBlacklisted bool `db:"is_blacklisted" json:"is_blacklisted"`
+	BuilderStatus uint8 `db:"builder_status"   json:"builder_status"`
 
 	LastSubmissionID   sql.NullInt64 `db:"last_submission_id"   json:"last_submission_id"`
 	LastSubmissionSlot uint64        `db:"last_submission_slot" json:"last_submission_slot"`
