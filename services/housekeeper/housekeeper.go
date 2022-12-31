@@ -338,10 +338,15 @@ func (hk *Housekeeper) updateBlockBuildersInRedis() {
 
 	hk.log.Infof("updating %d block builders in Redis...", len(builders))
 	for _, builder := range builders {
-		status := datastore.MakeBlockBuilderStatus(datastore.BlockBuilderStatus{
-			HighPrio:    builder.IsHighPrio,
-			Blacklisted: builder.IsBlacklisted,
-		})
+		code := datastore.LowPrio
+		if builder.IsOptimistic {
+			code = datastore.Optimistic
+		} else if builder.IsHighPrio {
+			code = datastore.HighPrio
+		} else if builder.IsBlacklisted {
+			code = datastore.Blacklisted
+		}
+		status := datastore.MakeBlockBuilderStatus(code)
 		hk.log.Infof("updating block builder in Redis: %s - %s", builder.BuilderPubkey, status)
 		err = hk.redis.SetBlockBuilderStatus(builder.BuilderPubkey, status)
 		if err != nil {

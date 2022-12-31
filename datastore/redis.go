@@ -32,20 +32,35 @@ var (
 	ErrFailedUpdatingTopBidNoBids = errors.New("failed to update top bid because no bids were found")
 )
 
-type BlockBuilderStatusStr string
+type BlockBuilderStatus string
 
 var (
-	RedisBlockBuilderStatusLowPrio     BlockBuilderStatusStr = ""
-	RedisBlockBuilderStatusHighPrio    BlockBuilderStatusStr = "high-prio"
-	RedisBlockBuilderStatusBlacklisted BlockBuilderStatusStr = "blacklisted"
-	RedisBlockBuilderStatusOptimistic  BlockBuilderStatusStr = "optimistic"
+	RedisBlockBuilderStatusLowPrio     BlockBuilderStatus = ""
+	RedisBlockBuilderStatusHighPrio    BlockBuilderStatus = "high-prio"
+	RedisBlockBuilderStatusOptimistic  BlockBuilderStatus = "optimistic"
+	RedisBlockBuilderStatusBlacklisted BlockBuilderStatus = "blacklisted"
 )
 
-type BlockBuilderStatus struct {
-	LowPrio     bool
-	HighPrio    bool
-	Blacklisted bool
-	Optimistic  bool
+type BlockBuilderStatusCode uint64
+
+const (
+	LowPrio BlockBuilderStatusCode = iota
+	HighPrio
+	Optimistic
+	Blacklisted
+)
+
+func (b BlockBuilderStatusCode) String() string {
+	switch b {
+	case Optimistic:
+		return string(RedisBlockBuilderStatusOptimistic)
+	case HighPrio:
+		return string(RedisBlockBuilderStatusHighPrio)
+	case Blacklisted:
+		return string(RedisBlockBuilderStatusBlacklisted)
+	default:
+		return string(RedisBlockBuilderStatusLowPrio)
+	}
 }
 
 func PubkeyHexToLowerStr(pk types.PubkeyHex) string {
@@ -331,20 +346,25 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 	return resp, err
 }
 
-func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status BlockBuilderStatusStr) (err error) {
+func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status BlockBuilderStatus) (err error) {
 	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, string(status)).Err()
 }
 
-func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (status BlockBuilderStatus, err error) {
+func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code BlockBuilderStatusCode, err error) {
 	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderStatus, builderPubkey).Result()
 	if errors.Is(err, redis.Nil) {
-		return status, nil
+		return code, nil
 	}
-	status.HighPrio = BlockBuilderStatusStr(res) == RedisBlockBuilderStatusHighPrio
-	status.LowPrio = !status.HighPrio
-	status.Blacklisted = BlockBuilderStatusStr(res) == RedisBlockBuilderStatusBlacklisted
-	status.Optimistic = BlockBuilderStatusStr(res) == RedisBlockBuilderStatusOptimistic
-	return status, err
+	switch status := BlockBuilderStatus(res); status {
+	case RedisBlockBuilderStatusHighPrio:
+		return HighPrio, nil
+	case RedisBlockBuilderStatusOptimistic:
+		return Optimistic, nil
+	case RedisBlockBuilderStatusBlacklisted:
+		return Blacklisted, nil
+	default:
+		return LowPrio, nil
+	}
 }
 
 func (r *RedisCache) GetBuilderLatestPayloadReceivedAt(slot uint64, builderPubkey, parentHash, proposerPubkey string) (int64, error) {
