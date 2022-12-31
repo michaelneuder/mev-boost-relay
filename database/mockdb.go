@@ -100,3 +100,7 @@ func (db MockDB) IncBlockBuilderStatsAfterGetHeader(slot uint64, blockhash strin
 func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error {
 	return nil
 }
+
+func (db MockDB) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error {
+	return nil
+}

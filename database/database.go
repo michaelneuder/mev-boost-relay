@@ -44,6 +44,8 @@ type IDatabaseService interface {
 	SetBlockBuilderStatus(pubkey string, status common.BlockBuilderStatusCode) error
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
+
+	SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error
 }
 
 type DatabaseService struct {
@@ -484,5 +486,31 @@ func (s *DatabaseService) GetExecutionPayloads(idFirst, idLast uint64) (entries 
 func (s *DatabaseService) DeleteExecutionPayloads(idFirst, idLast uint64) error {
 	query := `DELETE FROM ` + vars.TableExecutionPayload + ` WHERE id >= $1 AND id <= $2`
 	_, err := s.DB.Exec(query, idFirst, idLast)
+	return err
+}
+
+func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error {
+	_signedBlindedBeaconBlock, err := json.Marshal(signedBlindedBeaconBlock)
+	if err != nil {
+		return err
+	}
+
+	validatorRefundEntry := ValidatorRefundEntry{
+		SignedBlindedBeaconBlock: NewNullString(string(_signedBlindedBeaconBlock)),
+
+		Slot:  bidTrace.Slot,
+		Epoch: bidTrace.Slot / uint64(common.SlotsPerEpoch),
+
+		BuilderPubkey:  bidTrace.BuilderPubkey.String(),
+		ProposerPubkey: bidTrace.ProposerPubkey.String(),
+
+		Value: bidTrace.Value.String(),
+	}
+
+	query := `INSERT INTO ` + vars.TableValidatorRefunds + `
+		(signed_blinded_beacon_block, slot, epoch, builder_pubkey, proposer_pubkey, value) VALUES
+		(:signed_blinded_beacon_block, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value)
+		ON CONFLICT DO NOTHING`
+	_, err = s.DB.NamedExec(query, validatorRefundEntry)
 	return err
 }

@@ -106,15 +106,6 @@ type blockSimOptions struct {
 	req      *BuilderBlockValidationRequest
 }
 
-// Data needed to initiate a proposer refund.
-type proposerRefundOptions struct {
-	proposerPK string
-	builderPK  string
-	amount     types.U256Str
-	slot       uint64
-	bidTrace   types.BidTrace
-}
-
 // RelayAPI represents a single Relay instance
 type RelayAPI struct {
 	opts RelayAPIOpts
@@ -159,7 +150,6 @@ type RelayAPI struct {
 
 	// Channel used to process optimistic blocks asynchronously.
 	optimisticBlockC chan blockSimOptions
-	proposerRefundC  chan proposerRefundOptions
 }
 
 // NewRelayAPI creates a new service. if builders is nil, allow any builder
@@ -219,7 +209,6 @@ func NewRelayAPI(opts RelayAPIOpts) (api *RelayAPI, err error) {
 		activeValidatorC: make(chan types.PubkeyHex, 450_000),
 		validatorRegC:    make(chan types.SignedValidatorRegistration, 450_000),
 		optimisticBlockC: make(chan blockSimOptions, 450_000),
-		proposerRefundC:  make(chan proposerRefundOptions, 450_000),
 	}
 
 	if os.Getenv("FORCE_GET_HEADER_204") == "1" {
@@ -330,9 +319,6 @@ func (api *RelayAPI) StartServer() (err error) {
 		for i := 0; i < numValidatorRegProcessors; i++ {
 			go api.startValidatorRegistrationDBProcessor()
 		}
-
-		// TODO(mikeneuder): consider if we should use >1 proposerRefundProcessors.
-		go api.startProposerRefundProcessor()
 	}
 
 	// Process current slot
@@ -449,18 +435,6 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 				api.log.WithError(err).Error("could not set block builder status in database")
 			}
 		}
-	}
-}
-
-// startProposerRefundProcessor keeps listening on the channel and issuing proposer refunds.
-func (api *RelayAPI) startProposerRefundProcessor() {
-	for opts := range api.proposerRefundC {
-		// TODO(mikeneuder): Implement refund logic.
-		api.log.WithFields(logrus.Fields{
-			"proposerPK": opts.proposerPK,
-			"builderPK":  opts.builderPK,
-			"amount":     opts.amount,
-		}).Info("Received proposer refund event.")
 	}
 }
 
@@ -928,13 +902,12 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		})
 		if simErr != nil {
 			log.WithError(err).Error("failed to simulate signed block")
-			api.proposerRefundC <- proposerRefundOptions{
-				// Both PKs are hex strings.
-				proposerPK: proposerPubkey.String(),
-				builderPK:  bidTrace.BuilderPubkey.PubkeyHex().String(),
-				amount:     bidTrace.Value,
-				slot:       slot,
-				bidTrace:   bidTrace.BidTrace,
+			err = api.db.SaveValidatorRefund(bidTrace, payload)
+			if err != nil {
+				log.WithError(err).WithFields(logrus.Fields{
+					"bidTrace":                 bidTrace,
+					"signedBlindedBeaconBlock": payload,
+				}).Error("failed to save validator refund to database")
 			}
 		}
 	}()

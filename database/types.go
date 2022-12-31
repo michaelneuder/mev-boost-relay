@@ -198,3 +198,18 @@ type BlockBuilderEntry struct {
 
 	NumSentGetPayload uint64 `db:"num_sent_getpayload" json:"num_sent_getpayload"`
 }
+
+type ValidatorRefundEntry struct {
+	ID         int64     `db:"id"`
+	InsertedAt time.Time `db:"inserted_at"`
+
+	SignedBlindedBeaconBlock sql.NullString `db:"signed_blinded_beacon_block"`
+
+	Slot  uint64 `db:"slot"`
+	Epoch uint64 `db:"epoch"`
+
+	BuilderPubkey  string `db:"builder_pubkey"`
+	ProposerPubkey string `db:"proposer_pubkey"`
+
+	Value string `db:"value"`
+}
