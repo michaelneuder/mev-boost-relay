@@ -32,28 +32,6 @@ var (
 	ErrFailedUpdatingTopBidNoBids = errors.New("failed to update top bid because no bids were found")
 )
 
-type BlockBuilderStatus string
-
-var (
-	RedisBlockBuilderStatusLowPrio     BlockBuilderStatus = ""
-	RedisBlockBuilderStatusHighPrio    BlockBuilderStatus = "high-prio"
-	RedisBlockBuilderStatusOptimistic  BlockBuilderStatus = "optimistic"
-	RedisBlockBuilderStatusBlacklisted BlockBuilderStatus = "blacklisted"
-)
-
-func StatusStringFromCode(b common.BlockBuilderStatusCode) string {
-	switch b {
-	case common.Optimistic:
-		return string(RedisBlockBuilderStatusOptimistic)
-	case common.HighPrio:
-		return string(RedisBlockBuilderStatusHighPrio)
-	case common.Blacklisted:
-		return string(RedisBlockBuilderStatusBlacklisted)
-	default:
-		return string(RedisBlockBuilderStatusLowPrio)
-	}
-}
-
 func PubkeyHexToLowerStr(pk types.PubkeyHex) string {
 	return strings.ToLower(string(pk))
 }
@@ -339,8 +317,8 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 	return resp, err
 }
 
-func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status BlockBuilderStatus) (err error) {
-	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, string(status)).Err()
+func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, code common.BlockBuilderStatusCode) (err error) {
+	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, code).Err()
 }
 
 func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code common.BlockBuilderStatusCode, err error) {
@@ -348,16 +326,11 @@ func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code common.Bl
 	if errors.Is(err, redis.Nil) {
 		return code, nil
 	}
-	switch status := BlockBuilderStatus(res); status {
-	case RedisBlockBuilderStatusHighPrio:
-		return common.HighPrio, nil
-	case RedisBlockBuilderStatusOptimistic:
-		return common.Optimistic, nil
-	case RedisBlockBuilderStatusBlacklisted:
-		return common.Blacklisted, nil
-	default:
-		return common.LowPrio, nil
+	in, err := strconv.Atoi(res)
+	if err != nil {
+		return code, err
 	}
+	return common.BlockBuilderStatusCode(in), nil
 }
 
 func (r *RedisCache) SetBlockBuilderCollateral(builderPubkey, value string) (err error) {

@@ -30,3 +30,16 @@ const (
 	Optimistic
 	Blacklisted
 )
+
+func (b BlockBuilderStatusCode) String() string {
+	switch b {
+	case Optimistic:
+		return "optimistic"
+	case HighPrio:
+		return "high-prio"
+	case Blacklisted:
+		return "blacklisted"
+	default:
+		return "low-prio"
+	}
+}
