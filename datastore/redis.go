@@ -91,10 +91,11 @@ type RedisCache struct {
 	keyKnownValidators                string
 	keyValidatorRegistrationTimestamp string
 
-	keyRelayConfig        string
-	keyStats              string
-	keyProposerDuties     string
-	keyBlockBuilderStatus string
+	keyRelayConfig            string
+	keyStats                  string
+	keyProposerDuties         string
+	keyBlockBuilderStatus     string
+	keyBlockBuilderCollateral string
 }
 
 func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
@@ -119,9 +120,10 @@ func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
 		keyValidatorRegistrationTimestamp: fmt.Sprintf("%s/%s:validator-registration-timestamp", redisPrefix, prefix),
 		keyRelayConfig:                    fmt.Sprintf("%s/%s:relay-config", redisPrefix, prefix),
 
-		keyStats:              fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
-		keyProposerDuties:     fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
-		keyBlockBuilderStatus: fmt.Sprintf("%s/%s:block-builder-status", redisPrefix, prefix),
+		keyStats:                  fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
+		keyProposerDuties:         fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
+		keyBlockBuilderStatus:     fmt.Sprintf("%s/%s:block-builder-status", redisPrefix, prefix),
+		keyBlockBuilderCollateral: fmt.Sprintf("%s/%s:block-builder-collateral", redisPrefix, prefix),
 	}, nil
 }
 
@@ -356,6 +358,21 @@ func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code common.Bl
 	default:
 		return common.LowPrio, nil
 	}
+}
+
+func (r *RedisCache) SetBlockBuilderCollateral(builderPubkey, value string) (err error) {
+	return r.client.HSet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey, value).Err()
+}
+
+func (r *RedisCache) GetBlockBuilderCollateral(builderPubkey string) (value string, err error) {
+	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return res, nil
 }
 
 func (r *RedisCache) GetBuilderLatestPayloadReceivedAt(slot uint64, builderPubkey, parentHash, proposerPubkey string) (int64, error) {

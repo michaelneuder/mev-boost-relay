@@ -1034,6 +1034,51 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		log.WithError(err).Error("could not get block builder status")
 	}
 
+	// Check for collateral in optimistic case.
+	if builderStatusCode == common.Optimistic {
+		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
+		if err != nil {
+			log.WithError(err).Error("could not get block builder collateral, setting status as low prio")
+			builderStatusCode = common.LowPrio
+			builderCollateralStr = ""
+		}
+
+		// Try to parse builder collateral string (U256Str) type.
+		var builderCollateral types.U256Str
+		err = builderCollateral.UnmarshalText([]byte(builderCollateralStr))
+		if err != nil {
+			log.WithError(err).Error("could parse builder collateral string, setting status as low prio")
+			builderStatusCode = common.LowPrio
+			builderCollateral = ZeroU256
+		}
+
+		// Check if builder collateral exceeds the value of the block. If not, set as just high prio instead of optimistic.
+		if builderCollateral.Cmp((*types.U256Str)(&payload.Message.Value)) < 0 {
+			builderStatusCode = common.HighPrio
+		}
+
+		// Async update the builder status in redis and the db async if no longer optimistic.
+		go func() {
+			if builderStatusCode != common.Optimistic {
+				redisStatus := datastore.BlockBuilderStatus(datastore.StatusStringFromCode(builderStatusCode))
+				err := api.redis.SetBlockBuilderStatus(payload.Message.BuilderPubkey.String(), redisStatus)
+				log = log.WithFields(logrus.Fields{
+					"NewStatusCode": builderStatusCode,
+				})
+				if err != nil {
+					log.WithError(err).Error("unable to update block builder status in redis")
+				}
+
+				err = api.db.SetBlockBuilderStatus(payload.Message.BuilderPubkey.String(), builderStatusCode)
+				if err != nil {
+					log.WithError(err).Error("unable to update block builder status in the database")
+				}
+
+				log.Info("builder status updated in redis and database.")
+			}
+		}()
+	}
+
 	// Timestamp check
 	expectedTimestamp := api.genesisInfo.Data.GenesisTime + (payload.Message.Slot * 12)
 	if payload.ExecutionPayload.Timestamp != expectedTimestamp {
@@ -1167,6 +1212,8 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 			api.RespondError(w, http.StatusBadRequest, simErr.Error())
 		}
 	} else {
+		// Manually set to high priority for optimistic blocks.
+		opts.highPrio = true
 		// Write optimistic block to channel for async validation.
 		api.optimisticBlockC <- opts
 	}

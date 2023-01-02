@@ -120,7 +120,8 @@ var Migration001InitDatabase = &migrate.Migration{
 			builder_pubkey  varchar(98) NOT NULL,
 			description    	text NOT NULL,
 
-			builder_status  bigint NOT NULL,
+			builder_status     bigint NOT NULL,
+			builder_collateral NUMERIC(48, 0),
 
 			last_submission_id   bigint references ` + vars.TableBuilderBlockSubmission + `(id) on delete set null,
 			last_submission_slot bigint NOT NULL,
@@ -155,6 +156,7 @@ var Migration001InitDatabase = &migrate.Migration{
 		DROP TABLE IF EXISTS ` + vars.TableBlockBuilder + `;
 		DROP TABLE IF EXISTS ` + vars.TableExecutionPayload + `;
 		DROP TABLE IF EXISTS ` + vars.TableValidatorRegistration + `;
+		DROP TABLE IF EXISTS ` + vars.TableValidatorRefunds + `;
 		`},
 	DisableTransactionUp:   false,
 	DisableTransactionDown: false,
