@@ -422,6 +422,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 	for opts := range api.optimisticBlockC {
 		err := api.simulateBlock(opts)
 		if err != nil {
+			api.log.WithError(err).Error("block simualtion failed")
 			// Validation failed, mark the status of the builder as lowPrio (pessemistic).
 			newStatus := datastore.MakeBlockBuilderStatus(common.LowPrio)
 			builderPubKey := opts.req.Message.BuilderPubkey.String()
@@ -888,26 +889,47 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			log.WithError(err).Error("failed to increment builder-stats after getPayload")
 		}
 
-		simErr := api.simulateBlock(blockSimOptions{
-			ctx:      req.Context(),
-			log:      log,
-			highPrio: true, // manually set to true for these blocks.
-			req: &BuilderBlockValidationRequest{
-				BuilderSubmitBlockRequest: types.BuilderSubmitBlockRequest{
-					Signature:        payload.Signature,
-					Message:          &bidTrace.BidTrace,
-					ExecutionPayload: getPayloadResp.Data,
+		builderStatus, err := api.redis.GetBlockBuilderStatus(bidTrace.BuilderPubkey.String())
+		if err != nil {
+			log.WithError(err).Error("failed to get block builder status")
+		}
+
+		// Check if the block was valid in the optimistic case.
+		if builderStatus == common.Optimistic {
+			simErr := api.simulateBlock(blockSimOptions{
+				ctx:      req.Context(),
+				log:      log,
+				highPrio: true, // manually set to true for these blocks.
+				req: &BuilderBlockValidationRequest{
+					BuilderSubmitBlockRequest: types.BuilderSubmitBlockRequest{
+						Signature:        payload.Signature,
+						Message:          &bidTrace.BidTrace,
+						ExecutionPayload: getPayloadResp.Data,
+					},
 				},
-			},
-		})
-		if simErr != nil {
-			log.WithError(err).Error("failed to simulate signed block")
-			err = api.db.SaveValidatorRefund(bidTrace, payload)
-			if err != nil {
-				log.WithError(err).WithFields(logrus.Fields{
-					"bidTrace":                 bidTrace,
-					"signedBlindedBeaconBlock": payload,
-				}).Error("failed to save validator refund to database")
+			})
+			if simErr != nil {
+				log.WithError(err).Error("failed to simulate signed block")
+				err = api.db.SaveValidatorRefund(bidTrace, payload)
+				if err != nil {
+					log.WithError(err).WithFields(logrus.Fields{
+						"bidTrace":                 bidTrace,
+						"signedBlindedBeaconBlock": payload,
+					}).Error("failed to save validator refund to database")
+				}
+
+				// Validation failed, mark the status of the builder as lowPrio (pessemistic).
+				newStatus := datastore.MakeBlockBuilderStatus(common.LowPrio)
+				builderPubKey := bidTrace.BuilderPubkey.String()
+				err := api.redis.SetBlockBuilderStatus(builderPubKey, newStatus)
+				if err != nil {
+					api.log.WithError(err).Error("could not set block builder status in redis")
+				}
+
+				err = api.db.SetBlockBuilderStatus(builderPubKey, common.LowPrio)
+				if err != nil {
+					api.log.WithError(err).Error("could not set block builder status in database")
+				}
 			}
 		}
 	}()
