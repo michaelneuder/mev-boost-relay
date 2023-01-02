@@ -89,7 +89,7 @@ func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, err
 	return nil, nil
 }
 
-func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BlockBuilderStatusCode) error {
+func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BlockBuilderStatus) error {
 	return nil
 }
 

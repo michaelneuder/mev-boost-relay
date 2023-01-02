@@ -1058,16 +1058,16 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		}
 	}
 
-	builderStatusCode, err := api.redis.GetBlockBuilderStatus(payload.Message.BuilderPubkey.String())
+	builderStatus, err := api.redis.GetBlockBuilderStatus(payload.Message.BuilderPubkey.String())
 	log = log.WithFields(logrus.Fields{
-		"builderStatus":    builderStatusCode,
-		"builderStatusStr": builderStatusCode.String(),
+		"builderStatus":    builderStatus,
+		"builderStatusStr": builderStatus.String(),
 	})
 	if err != nil {
 		log.WithError(err).Error("could not get block builder status")
 	}
 
-	if builderStatusCode == common.Blacklisted {
+	if builderStatus == common.Blacklisted {
 		log.Info("builder is blacklisted")
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -1075,7 +1075,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// Check for collateral in optimistic case.
-	if builderStatusCode == common.Optimistic {
+	if builderStatus == common.Optimistic {
 		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
 			log.WithError(err).Error("could not get block builder collateral")
@@ -1092,7 +1092,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 		// Check if builder collateral exceeds the value of the block. If not, set as just high prio instead of optimistic.
 		if builderCollateral.Cmp((*types.U256Str)(&payload.Message.Value)) < 0 {
-			builderStatusCode = common.HighPrio
+			builderStatus = common.HighPrio
 		}
 	}
 
@@ -1128,7 +1128,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// In case only high-prio requests are accepted, fail others
-	if api.ffDisableLowPrioBuilders && builderStatusCode != common.HighPrio {
+	if api.ffDisableLowPrioBuilders && builderStatus != common.HighPrio {
 		log.Info("rejecting low-prio builder (ff-disable-low-prio-builders)")
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -1136,8 +1136,8 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	log = log.WithFields(logrus.Fields{
-		"builderStatus":    builderStatusCode,
-		"builderStatusStr": builderStatusCode.String(),
+		"builderStatus":    builderStatus,
+		"builderStatusStr": builderStatus.String(),
 		"proposerPubkey":   payload.Message.ProposerPubkey.String(),
 		"parentHash":       payload.Message.ParentHash.String(),
 		"value":            payload.Message.Value.String(),
@@ -1207,7 +1207,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	// Construct simulation request.
 	opts := blockSimOptions{
 		ctx:      req.Context(),
-		highPrio: builderStatusCode == common.HighPrio || builderStatusCode == common.Optimistic,
+		highPrio: builderStatus == common.HighPrio || builderStatus == common.Optimistic,
 		log:      log,
 		req: &BuilderBlockValidationRequest{
 			BuilderSubmitBlockRequest: *payload,
@@ -1216,7 +1216,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// Only perform simulation on hot path if we are in non-optimistic mode.
-	if builderStatusCode == common.Optimistic {
+	if builderStatus == common.Optimistic {
 		// Write optimistic block to channel for async validation.
 		api.optimisticBlockC <- opts
 	} else {

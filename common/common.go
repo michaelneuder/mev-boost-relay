@@ -22,16 +22,16 @@ type HTTPServerTimeouts struct {
 	Idle       time.Duration // Timeout to disconnect idle client connections. None if 0.
 }
 
-type BlockBuilderStatusCode uint8
+type BlockBuilderStatus uint8
 
 const (
-	LowPrio BlockBuilderStatusCode = iota
+	LowPrio BlockBuilderStatus = iota
 	HighPrio
 	Optimistic
 	Blacklisted
 )
 
-func (b BlockBuilderStatusCode) String() string {
+func (b BlockBuilderStatus) String() string {
 	switch b {
 	case Optimistic:
 		return "optimistic"

@@ -188,7 +188,7 @@ type BlockBuilderEntry struct {
 	BuilderPubkey string `db:"builder_pubkey" json:"builder_pubkey"`
 	Description   string `db:"description"    json:"description"`
 
-	BuilderStatus     uint8  `db:"builder_status"       json:"builder_status"`
+	BuilderStatus     uint8  `db:"builder_status"  json:"builder_status"`
 	BuilderCollateral string `db:"builder_collateral"   json:"builder_collateral"`
 
 	LastSubmissionID   sql.NullInt64 `db:"last_submission_id"   json:"last_submission_id"`

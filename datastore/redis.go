@@ -317,20 +317,20 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 	return resp, err
 }
 
-func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, code common.BlockBuilderStatusCode) (err error) {
-	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, code).Err()
+func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status common.BlockBuilderStatus) (err error) {
+	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, status).Err()
 }
 
-func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (code common.BlockBuilderStatusCode, err error) {
+func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (status common.BlockBuilderStatus, err error) {
 	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderStatus, builderPubkey).Result()
 	if errors.Is(err, redis.Nil) {
-		return code, nil
+		return status, nil
 	}
 	in, err := strconv.Atoi(res)
 	if err != nil {
-		return code, err
+		return status, err
 	}
-	return common.BlockBuilderStatusCode(in), nil
+	return common.BlockBuilderStatus(in), nil
 }
 
 func (r *RedisCache) SetBlockBuilderCollateral(builderPubkey, value string) (err error) {

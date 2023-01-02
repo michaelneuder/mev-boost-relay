@@ -120,8 +120,8 @@ var Migration001InitDatabase = &migrate.Migration{
 			builder_pubkey  varchar(98) NOT NULL,
 			description    	text NOT NULL,
 
-			builder_status     bigint NOT NULL,
-			builder_collateral NUMERIC(48, 0),
+			builder_status_code  bigint NOT NULL,
+			builder_collateral   NUMERIC(48, 0),
 
 			last_submission_id   bigint references ` + vars.TableBuilderBlockSubmission + `(id) on delete set null,
 			last_submission_slot bigint NOT NULL,
