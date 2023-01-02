@@ -204,7 +204,8 @@ type ValidatorRefundEntry struct {
 	ID         int64     `db:"id"`
 	InsertedAt time.Time `db:"inserted_at"`
 
-	SignedBlindedBeaconBlock sql.NullString `db:"signed_blinded_beacon_block"`
+	SignedBlindedBeaconBlock    sql.NullString `db:"signed_blinded_beacon_block"`
+	SignedValidatorRegistration sql.NullString `db:"signed_validator_registration"`
 
 	Slot  uint64 `db:"slot"`
 	Epoch uint64 `db:"epoch"`
@@ -213,4 +214,7 @@ type ValidatorRefundEntry struct {
 	ProposerPubkey string `db:"proposer_pubkey"`
 
 	Value string `db:"value"`
+
+	FeeRecipient string `db:"fee_recipient"`
+	GasLimit     uint64 `db:"gas_limit"`
 }

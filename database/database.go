@@ -45,7 +45,7 @@ type IDatabaseService interface {
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 
-	SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error
+	SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
 }
 
 type DatabaseService struct {
@@ -489,14 +489,20 @@ func (s *DatabaseService) DeleteExecutionPayloads(idFirst, idLast uint64) error 
 	return err
 }
 
-func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error {
+func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
 	_signedBlindedBeaconBlock, err := json.Marshal(signedBlindedBeaconBlock)
 	if err != nil {
 		return err
 	}
 
+	_signedValidatorRegistration, err := json.Marshal(signedValidatorRegistration)
+	if err != nil {
+		return err
+	}
+
 	validatorRefundEntry := ValidatorRefundEntry{
-		SignedBlindedBeaconBlock: NewNullString(string(_signedBlindedBeaconBlock)),
+		SignedBlindedBeaconBlock:    NewNullString(string(_signedBlindedBeaconBlock)),
+		SignedValidatorRegistration: NewNullString(string(_signedValidatorRegistration)),
 
 		Slot:  bidTrace.Slot,
 		Epoch: bidTrace.Slot / uint64(common.SlotsPerEpoch),
@@ -505,11 +511,14 @@ func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signe
 		ProposerPubkey: bidTrace.ProposerPubkey.String(),
 
 		Value: bidTrace.Value.String(),
+
+		FeeRecipient: signedValidatorRegistration.Message.FeeRecipient.String(),
+		GasLimit:     signedValidatorRegistration.Message.GasLimit,
 	}
 
 	query := `INSERT INTO ` + vars.TableValidatorRefunds + `
-		(signed_blinded_beacon_block, slot, epoch, builder_pubkey, proposer_pubkey, value) VALUES
-		(:signed_blinded_beacon_block, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value)
+		(signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit) VALUES
+		(:signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit)
 		ON CONFLICT DO NOTHING`
 	_, err = s.DB.NamedExec(query, validatorRefundEntry)
 	return err

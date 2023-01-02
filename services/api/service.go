@@ -909,24 +909,37 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			})
 			if simErr != nil {
 				log.WithError(err).Error("failed to simulate signed block")
-				err = api.db.SaveValidatorRefund(bidTrace, payload)
-				if err != nil {
-					log.WithError(err).WithFields(logrus.Fields{
-						"bidTrace":                 bidTrace,
-						"signedBlindedBeaconBlock": payload,
-					}).Error("failed to save validator refund to database")
-				}
-
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, mark the status of the builder as lowPrio (pessimistic).
-				err := api.redis.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
+				err = api.redis.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
 				if err != nil {
 					api.log.WithError(err).Error("could not set block builder status in redis")
 				}
-
 				err = api.db.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
 				if err != nil {
 					api.log.WithError(err).Error("could not set block builder status in database")
+				}
+
+				registrationEntry, err := api.db.GetValidatorRegistration(bidTrace.ProposerPubkey.String())
+				if err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						api.log.WithError(err).Error("no validator registration found")
+					} else {
+						api.log.WithError(err).Error("error getting validator registration")
+					}
+				}
+
+				signedRegistration, err := registrationEntry.ToSignedValidatorRegistration()
+				if err != nil {
+					api.log.WithError(err).Error("error converting registration entry to signed validator registration")
+				}
+				err = api.db.SaveValidatorRefund(bidTrace, payload, signedRegistration)
+				if err != nil {
+					log.WithError(err).WithFields(logrus.Fields{
+						"bidTrace":                    bidTrace,
+						"signedBlindedBeaconBlock":    payload,
+						"signedValidatorRegistration": signedRegistration,
+					}).Error("failed to save validator refund to database")
 				}
 			}
 		}

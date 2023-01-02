@@ -101,6 +101,6 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 	return nil
 }
 
-func (db MockDB) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock) error {
+func (db MockDB) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
 	return nil
 }
