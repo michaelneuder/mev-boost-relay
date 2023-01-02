@@ -1038,8 +1038,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	if builderStatusCode == common.Optimistic {
 		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
-			log.WithError(err).Error("could not get block builder collateral, setting status as low prio")
-			builderStatusCode = common.LowPrio
+			log.WithError(err).Error("could not get block builder collateral")
 			builderCollateralStr = ""
 		}
 
@@ -1047,8 +1046,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		var builderCollateral types.U256Str
 		err = builderCollateral.UnmarshalText([]byte(builderCollateralStr))
 		if err != nil {
-			log.WithError(err).Error("could parse builder collateral string, setting status as low prio")
-			builderStatusCode = common.LowPrio
+			log.WithError(err).Error("could parse builder collateral string")
 			builderCollateral = ZeroU256
 		}
 
@@ -1056,27 +1054,6 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		if builderCollateral.Cmp((*types.U256Str)(&payload.Message.Value)) < 0 {
 			builderStatusCode = common.HighPrio
 		}
-
-		// Async update the builder status in redis and the db async if no longer optimistic.
-		go func() {
-			if builderStatusCode != common.Optimistic {
-				redisStatus := datastore.BlockBuilderStatus(datastore.StatusStringFromCode(builderStatusCode))
-				err := api.redis.SetBlockBuilderStatus(payload.Message.BuilderPubkey.String(), redisStatus)
-				log = log.WithFields(logrus.Fields{
-					"NewStatusCode": builderStatusCode,
-				})
-				if err != nil {
-					log.WithError(err).Error("unable to update block builder status in redis")
-				}
-
-				err = api.db.SetBlockBuilderStatus(payload.Message.BuilderPubkey.String(), builderStatusCode)
-				if err != nil {
-					log.WithError(err).Error("unable to update block builder status in the database")
-				}
-
-				log.Info("builder status updated in redis and database.")
-			}
-		}()
 	}
 
 	// Timestamp check
