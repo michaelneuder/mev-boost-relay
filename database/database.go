@@ -465,7 +465,7 @@ func (s *DatabaseService) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderE
 }
 
 func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, builderStatusCode common.BuilderStatus) error {
-	query := `UPDATE ` + vars.TableBlockBuilder + ` SET status=$1 WHERE builder_pubkey=$3;`
+	query := `UPDATE ` + vars.TableBlockBuilder + ` SET status=$1 WHERE builder_pubkey=$2;`
 	_, err := s.DB.Exec(query, uint8(builderStatusCode), pubkey)
 	return err
 }
