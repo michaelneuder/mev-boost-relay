@@ -104,3 +104,7 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 func (db MockDB) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
 	return nil
 }
+
+func (db MockDB) GetBlockBuildersFromCollateralID(collateralID uint64) ([]*BlockBuilderEntry, error) {
+	return nil, nil
+}

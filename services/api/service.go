@@ -414,6 +414,40 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	return simErr
 }
 
+// Demotes a set of builders who have matching collateral IDs. This function
+// continues to try demoting even if an error is encountered.
+func (api *RelayAPI) demoteBuildersCollateralID(builderPubkey string) {
+	collateralPubkeys := []string{builderPubkey}
+	// Fetch builder collateral_id.
+	builder, err := api.db.GetBlockBuilderByPubkey(builderPubkey)
+	if err != nil {
+		api.log.WithError(err).Error("unable to get builder from database")
+	}
+	collateralID := builder.CollateralID
+
+	// Fetch additional builder pubkeys using the collateral_id.
+	otherBuilders, err := api.db.GetBlockBuildersFromCollateralID(collateralID)
+	if err != nil {
+		api.log.WithError(err).Error("unable to get extra builders from collateral id")
+	}
+	for _, b := range otherBuilders {
+		collateralPubkeys = append(collateralPubkeys, b.BuilderPubkey)
+	}
+
+	// Demote all the pubkeys in both redis and the db.
+	for _, pk := range collateralPubkeys {
+		err = api.redis.SetBuilderStatus(pk, common.LowPrio)
+		if err != nil {
+			api.log.WithError(err).Error("could not set builder status in redis")
+		}
+
+		err = api.db.SetBlockBuilderStatus(pk, common.LowPrio)
+		if err != nil {
+			api.log.WithError(err).Error("could not set builder status in database")
+		}
+	}
+}
+
 // startOptimisticBlockProcessor keeps listening on the channel and validating incoming blocks asynchronously.
 func (api *RelayAPI) startOptimisticBlockProcessor() {
 	for opts := range api.optimisticBlockC {
@@ -421,16 +455,8 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 		if err != nil {
 			api.log.WithError(err).Error("block simulation failed")
 			builderPubkey := opts.req.Message.BuilderPubkey.String()
-			// Validation failed, mark the status of the builder as lowPrio (pessimistic).
-			err := api.redis.SetBuilderStatus(builderPubkey, common.LowPrio)
-			if err != nil {
-				api.log.WithError(err).Error("could not set block builder status in redis")
-			}
-
-			err = api.db.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
-			if err != nil {
-				api.log.WithError(err).Error("could not set block builder status in database")
-			}
+			// Validation failed, demote all builders with the collateral id.
+			api.demoteBuildersCollateralID(builderPubkey)
 
 			bidTrace := &common.BidTraceV2{
 				BidTrace: *opts.req.Message,
@@ -918,15 +944,8 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			if simErr != nil {
 				log.WithError(err).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
-				// Validation failed, mark the status of the builder as lowPrio (pessimistic).
-				err = api.redis.SetBuilderStatus(builderPubkey, common.LowPrio)
-				if err != nil {
-					api.log.WithError(err).Error("could not set builder status in redis")
-				}
-				err = api.db.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
-				if err != nil {
-					api.log.WithError(err).Error("could not set block builder status in database")
-				}
+				// Validation failed, demote all builders with the collateral id.
+				api.demoteBuildersCollateralID(builderPubkey)
 
 				registrationEntry, err := api.db.GetValidatorRegistration(bidTrace.ProposerPubkey.String())
 				if err != nil {

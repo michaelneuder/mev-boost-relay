@@ -338,7 +338,7 @@ func (hk *Housekeeper) updateBlockBuildersInRedis() {
 
 	hk.log.Infof("updating %d block builders in Redis...", len(builders))
 	for _, builder := range builders {
-		code := common.BuilderStatus(builder.BuilderStatus)
+		code := common.BuilderStatus(builder.Status)
 		hk.log.Infof("updating block builder in Redis: %s - %s", builder.BuilderPubkey, code.String())
 		err = hk.redis.SetBuilderStatus(builder.BuilderPubkey, code)
 		if err != nil {
