@@ -45,7 +45,7 @@ type IDatabaseService interface {
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 
-	SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
+	UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
 }
 
 type DatabaseService struct {
@@ -489,20 +489,17 @@ func (s *DatabaseService) DeleteExecutionPayloads(idFirst, idLast uint64) error 
 	return err
 }
 
-func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
-	_signedBlindedBeaconBlock, err := json.Marshal(signedBlindedBeaconBlock)
+func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	if bidTrace == nil {
+		return fmt.Errorf("nil bidTrace invalid for UpsertBuilderDemotion")
+	}
+
+	_bidTrace, err := json.Marshal(bidTrace)
 	if err != nil {
 		return err
 	}
-
-	_signedValidatorRegistration, err := json.Marshal(signedValidatorRegistration)
-	if err != nil {
-		return err
-	}
-
-	validatorRefundEntry := ValidatorRefundEntry{
-		SignedBlindedBeaconBlock:    NewNullString(string(_signedBlindedBeaconBlock)),
-		SignedValidatorRegistration: NewNullString(string(_signedValidatorRegistration)),
+	builderDemotionEntry := BuilderDemotionEntry{
+		UnsignedBidTrace: NewNullString(string(_bidTrace)),
 
 		Slot:  bidTrace.Slot,
 		Epoch: bidTrace.Slot / uint64(common.SlotsPerEpoch),
@@ -512,14 +509,46 @@ func (s *DatabaseService) SaveValidatorRefund(bidTrace *common.BidTraceV2, signe
 
 		Value: bidTrace.Value.String(),
 
-		FeeRecipient: signedValidatorRegistration.Message.FeeRecipient.String(),
-		GasLimit:     signedValidatorRegistration.Message.GasLimit,
+		BlockHash: bidTrace.BlockHash.String(),
 	}
 
-	query := `INSERT INTO ` + vars.TableValidatorRefunds + `
-		(signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit) VALUES
-		(:signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit)
-		ON CONFLICT DO NOTHING`
-	_, err = s.DB.NamedExec(query, validatorRefundEntry)
+	if signedBlindedBeaconBlock != nil {
+		_signedBlindedBeaconBlock, err := json.Marshal(signedBlindedBeaconBlock)
+		if err != nil {
+			return err
+		}
+		builderDemotionEntry.SignedBlindedBeaconBlock = NewNullString(string(_signedBlindedBeaconBlock))
+	}
+
+	if signedValidatorRegistration != nil {
+		_signedValidatorRegistration, err := json.Marshal(signedValidatorRegistration)
+		if err != nil {
+			return err
+		}
+		builderDemotionEntry.SignedValidatorRegistration = NewNullString(string(_signedValidatorRegistration))
+		builderDemotionEntry.FeeRecipient = signedValidatorRegistration.Message.FeeRecipient.String()
+		builderDemotionEntry.GasLimit = signedValidatorRegistration.Message.GasLimit
+	}
+
+	var query string
+	// If block_hash conflicts and we have a published block, fill in fields needed for the refund.
+	if signedBlindedBeaconBlock != nil && signedValidatorRegistration != nil {
+		query = `INSERT INTO ` + vars.TableBuidlerDemotions + `
+			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			ON CONFLICT (block_hash) DO UPDATE SET
+				signed_blinded_beacon_block = :signed_blinded_beacon_block,
+				signed_validator_registration = :signed_validator_registration,
+				fee_recipient = :fee_recipient,
+				gas_limit = :gas_limit;
+			`
+	} else {
+		// If the block_hash conflicts, then all the relevant data must be there already.
+		query = `INSERT INTO ` + vars.TableBuidlerDemotions + `
+			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			ON CONFLICT (block_hash) DO NOTHING`
+	}
+	_, err = s.DB.NamedExec(query, builderDemotionEntry)
 	return err
 }

@@ -402,17 +402,14 @@ func (api *RelayAPI) startValidatorRegistrationDBProcessor() {
 func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	t := time.Now()
 	simErr := api.blockSimRateLimiter.send(opts.ctx, opts.req, opts.highPrio)
+	log := opts.log.WithFields(logrus.Fields{
+		"duration":   time.Since(t).Seconds(),
+		"numWaiting": api.blockSimRateLimiter.currentCounter(),
+	})
 	if simErr != nil {
-		log := opts.log.WithField("simErr", simErr.Error())
-		log.WithError(simErr).WithFields(logrus.Fields{
-			"duration":   time.Since(t).Seconds(),
-			"numWaiting": api.blockSimRateLimiter.currentCounter(),
-		}).Info("block validation failed")
+		log.WithError(simErr).Error("block validation failed")
 	} else {
-		opts.log.WithFields(logrus.Fields{
-			"duration":   time.Since(t).Seconds(),
-			"numWaiting": api.blockSimRateLimiter.currentCounter(),
-		}).Info("block validation successful")
+		log.Info("block validation successful")
 	}
 	return simErr
 }
@@ -433,6 +430,17 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			err = api.db.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
 			if err != nil {
 				api.log.WithError(err).Error("could not set block builder status in database")
+			}
+
+			bidTrace := &common.BidTraceV2{
+				BidTrace: *opts.req.Message,
+			}
+			// Upsert into the builder demotion table but without the
+			// blinded block or the validator registration, becuase we don't
+			// know if this bid will be accepted.
+			err = api.db.UpsertBuilderDemotion(bidTrace, nil, nil)
+			if err != nil {
+				api.log.WithError(err).Error("could not upsert bid trace")
 			}
 		}
 	}
@@ -933,7 +941,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				if err != nil {
 					api.log.WithError(err).Error("error converting registration entry to signed validator registration")
 				}
-				err = api.db.SaveValidatorRefund(bidTrace, payload, signedRegistration)
+				err = api.db.UpsertBuilderDemotion(bidTrace, payload, signedRegistration)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
 						"bidTrace":                    bidTrace,

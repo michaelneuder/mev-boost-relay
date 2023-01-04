@@ -200,10 +200,11 @@ type BlockBuilderEntry struct {
 	NumSentGetPayload uint64 `db:"num_sent_getpayload" json:"num_sent_getpayload"`
 }
 
-type ValidatorRefundEntry struct {
+type BuilderDemotionEntry struct {
 	ID         int64     `db:"id"`
 	InsertedAt time.Time `db:"inserted_at"`
 
+	UnsignedBidTrace            sql.NullString `db:"unsigned_bid_trace"`
 	SignedBlindedBeaconBlock    sql.NullString `db:"signed_blinded_beacon_block"`
 	SignedValidatorRegistration sql.NullString `db:"signed_validator_registration"`
 
@@ -217,4 +218,6 @@ type ValidatorRefundEntry struct {
 
 	FeeRecipient string `db:"fee_recipient"`
 	GasLimit     uint64 `db:"gas_limit"`
+
+	BlockHash string `db:"block_hash"`
 }
