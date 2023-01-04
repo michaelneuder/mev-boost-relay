@@ -422,7 +422,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			api.log.WithError(err).Error("block simulation failed")
 			builderPubkey := opts.req.Message.BuilderPubkey.String()
 			// Validation failed, mark the status of the builder as lowPrio (pessimistic).
-			err := api.redis.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
+			err := api.redis.SetBuilderStatus(builderPubkey, common.LowPrio)
 			if err != nil {
 				api.log.WithError(err).Error("could not set block builder status in redis")
 			}
@@ -896,9 +896,9 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			log.WithError(err).Error("failed to increment builder-stats after getPayload")
 		}
 
-		builderStatus, err := api.redis.GetBlockBuilderStatus(bidTrace.BuilderPubkey.String())
+		builderStatus, err := api.redis.GetBuilderStatus(bidTrace.BuilderPubkey.String())
 		if err != nil {
-			log.WithError(err).Error("failed to get block builder status")
+			log.WithError(err).Error("failed to get builder status")
 		}
 
 		// Check if the block was valid in the optimistic case.
@@ -919,9 +919,9 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				log.WithError(err).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, mark the status of the builder as lowPrio (pessimistic).
-				err = api.redis.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
+				err = api.redis.SetBuilderStatus(builderPubkey, common.LowPrio)
 				if err != nil {
-					api.log.WithError(err).Error("could not set block builder status in redis")
+					api.log.WithError(err).Error("could not set builder status in redis")
 				}
 				err = api.db.SetBlockBuilderStatus(builderPubkey, common.LowPrio)
 				if err != nil {
@@ -1066,7 +1066,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		}
 	}
 
-	builderStatus, err := api.redis.GetBlockBuilderStatus(payload.Message.BuilderPubkey.String())
+	builderStatus, err := api.redis.GetBuilderStatus(payload.Message.BuilderPubkey.String())
 	log = log.WithFields(logrus.Fields{
 		"builderStatus":    builderStatus,
 		"builderStatusStr": builderStatus.String(),
@@ -1084,7 +1084,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	// Check for collateral in optimistic case.
 	if builderStatus == common.Optimistic {
-		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
+		builderCollateralStr, err := api.redis.GetBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
 			log.WithError(err).Error("could not get block builder collateral")
 			builderCollateralStr = ""
@@ -1358,14 +1358,14 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 		} else if isHighPrio {
 			code = common.HighPrio
 		}
-		err := api.redis.SetBlockBuilderStatus(builderPubkey, code)
+		err := api.redis.SetBuilderStatus(builderPubkey, code)
 		if err != nil {
-			api.log.WithError(err).Error("could not set block builder status in redis")
+			api.log.WithError(err).Error("could not set builder status in redis")
 		}
 
 		err = api.db.SetBlockBuilderStatus(builderPubkey, code)
 		if err != nil {
-			api.log.WithError(err).Error("could not set block builder status in database")
+			api.log.WithError(err).Error("could not set builder status in database")
 		}
 
 		api.RespondOK(w, struct{ newStatus string }{newStatus: code.String()})

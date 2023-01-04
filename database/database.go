@@ -41,7 +41,7 @@ type IDatabaseService interface {
 
 	GetBlockBuilders() ([]*BlockBuilderEntry, error)
 	GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error)
-	SetBlockBuilderStatus(pubkey string, builderStatus common.BlockBuilderStatus) error
+	SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 
@@ -463,7 +463,7 @@ func (s *DatabaseService) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderE
 	return entry, err
 }
 
-func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, builderStatusCode common.BlockBuilderStatus) error {
+func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, builderStatusCode common.BuilderStatus) error {
 	query := `UPDATE ` + vars.TableBlockBuilder + ` SET builder_status=$1 WHERE builder_pubkey=$3;`
 	_, err := s.DB.Exec(query, uint8(builderStatusCode), pubkey)
 	return err
