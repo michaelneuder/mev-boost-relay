@@ -533,7 +533,7 @@ func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, sig
 	var query string
 	// If block_hash conflicts and we have a published block, fill in fields needed for the refund.
 	if signedBlindedBeaconBlock != nil && signedValidatorRegistration != nil {
-		query = `INSERT INTO ` + vars.TableBuidlerDemotions + `
+		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
 			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
 			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
 			ON CONFLICT (block_hash) DO UPDATE SET
@@ -544,7 +544,7 @@ func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, sig
 			`
 	} else {
 		// If the block_hash conflicts, then all the relevant data must be there already.
-		query = `INSERT INTO ` + vars.TableBuidlerDemotions + `
+		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
 			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
 			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
 			ON CONFLICT (block_hash) DO NOTHING`
