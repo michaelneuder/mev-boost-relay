@@ -416,8 +416,7 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 
 // Demotes a set of builders who have matching collateral IDs. This function
 // continues to try demoting even if an error is encountered.
-func (api *RelayAPI) demoteBuildersCollateralID(builderPubkey string) {
-	collateralPubkeys := []string{builderPubkey}
+func (api *RelayAPI) demoteBuildersByCollateralID(builderPubkey string) {
 	// Fetch builder collateral_id.
 	builder, err := api.db.GetBlockBuilderByPubkey(builderPubkey)
 	if err != nil {
@@ -426,16 +425,14 @@ func (api *RelayAPI) demoteBuildersCollateralID(builderPubkey string) {
 	collateralID := builder.CollateralID
 
 	// Fetch additional builder pubkeys using the collateral_id.
-	otherBuilders, err := api.db.GetBlockBuildersFromCollateralID(collateralID)
+	allBuilders, err := api.db.GetBlockBuildersFromCollateralID(collateralID)
 	if err != nil {
-		api.log.WithError(err).Error("unable to get extra builders from collateral id")
-	}
-	for _, b := range otherBuilders {
-		collateralPubkeys = append(collateralPubkeys, b.BuilderPubkey)
+		api.log.WithError(err).Error("unable to get builders from collateral id")
 	}
 
 	// Demote all the pubkeys in both redis and the db.
-	for _, pk := range collateralPubkeys {
+	for _, b := range allBuilders {
+		pk := b.BuilderPubkey
 		err = api.redis.SetBuilderStatus(pk, common.LowPrio)
 		if err != nil {
 			api.log.WithError(err).Error("could not set builder status in redis")
@@ -456,13 +453,13 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			api.log.WithError(err).Error("block simulation failed")
 			builderPubkey := opts.req.Message.BuilderPubkey.String()
 			// Validation failed, demote all builders with the collateral id.
-			api.demoteBuildersCollateralID(builderPubkey)
+			api.demoteBuildersByCollateralID(builderPubkey)
 
 			bidTrace := &common.BidTraceV2{
 				BidTrace: *opts.req.Message,
 			}
 			// Upsert into the builder demotion table but without the
-			// blinded block or the validator registration, becuase we don't
+			// blinded block or the validator registration, because we don't
 			// know if this bid will be accepted.
 			err = api.db.UpsertBuilderDemotion(bidTrace, nil, nil)
 			if err != nil {
@@ -945,7 +942,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				log.WithError(err).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, demote all builders with the collateral id.
-				api.demoteBuildersCollateralID(builderPubkey)
+				api.demoteBuildersByCollateralID(builderPubkey)
 
 				registrationEntry, err := api.db.GetValidatorRegistration(bidTrace.ProposerPubkey.String())
 				if err != nil {
@@ -1087,8 +1084,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	builderStatus, err := api.redis.GetBuilderStatus(payload.Message.BuilderPubkey.String())
 	log = log.WithFields(logrus.Fields{
-		"builderStatus":    builderStatus,
-		"builderStatusStr": builderStatus.String(),
+		"builderStatus": builderStatus.String(),
 	})
 	if err != nil {
 		log.WithError(err).Error("could not get block builder status")
@@ -1163,12 +1159,11 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	log = log.WithFields(logrus.Fields{
-		"builderStatus":    builderStatus,
-		"builderStatusStr": builderStatus.String(),
-		"proposerPubkey":   payload.Message.ProposerPubkey.String(),
-		"parentHash":       payload.Message.ParentHash.String(),
-		"value":            payload.Message.Value.String(),
-		"tx":               len(payload.ExecutionPayload.Transactions),
+		"builderStatus":  builderStatus.String(),
+		"proposerPubkey": payload.Message.ProposerPubkey.String(),
+		"parentHash":     payload.Message.ParentHash.String(),
+		"value":          payload.Message.Value.String(),
+		"tx":             len(payload.ExecutionPayload.Transactions),
 	})
 
 	if payload.Message.Slot <= api.headSlot.Load() {
@@ -1369,25 +1364,25 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 			"isHighPrio":    isHighPrio,
 			"isBlacklisted": isBlacklisted,
 		}).Info("updating builder status")
-		code := common.LowPrio
+		status := common.LowPrio
 		if isBlacklisted {
-			code = common.Blacklisted
+			status = common.Blacklisted
 		} else if isOptimistic {
-			code = common.Optimistic
+			status = common.Optimistic
 		} else if isHighPrio {
-			code = common.HighPrio
+			status = common.HighPrio
 		}
-		err := api.redis.SetBuilderStatus(builderPubkey, code)
+		err := api.redis.SetBuilderStatus(builderPubkey, status)
 		if err != nil {
 			api.log.WithError(err).Error("could not set builder status in redis")
 		}
 
-		err = api.db.SetBlockBuilderStatus(builderPubkey, code)
+		err = api.db.SetBlockBuilderStatus(builderPubkey, status)
 		if err != nil {
 			api.log.WithError(err).Error("could not set builder status in database")
 		}
 
-		api.RespondOK(w, struct{ newStatus string }{newStatus: code.String()})
+		api.RespondOK(w, struct{ newStatus string }{newStatus: status.String()})
 	}
 }
 

@@ -69,11 +69,11 @@ type RedisCache struct {
 	keyKnownValidators                string
 	keyValidatorRegistrationTimestamp string
 
-	keyRelayConfig       string
-	keyStats             string
-	keyProposerDuties    string
-	keyBuilderStatus     string
-	keyBuilderCollateral string
+	keyRelayConfig            string
+	keyStats                  string
+	keyProposerDuties         string
+	keyBlockBuilderStatus     string
+	keyBlockBuilderCollateral string
 }
 
 func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
@@ -98,10 +98,10 @@ func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
 		keyValidatorRegistrationTimestamp: fmt.Sprintf("%s/%s:validator-registration-timestamp", redisPrefix, prefix),
 		keyRelayConfig:                    fmt.Sprintf("%s/%s:relay-config", redisPrefix, prefix),
 
-		keyStats:             fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
-		keyProposerDuties:    fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
-		keyBuilderStatus:     fmt.Sprintf("%s/%s:block-builder-status", redisPrefix, prefix),
-		keyBuilderCollateral: fmt.Sprintf("%s/%s:block-builder-collateral", redisPrefix, prefix),
+		keyStats:                  fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
+		keyProposerDuties:         fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
+		keyBlockBuilderStatus:     fmt.Sprintf("%s/%s:block-builder-status", redisPrefix, prefix),
+		keyBlockBuilderCollateral: fmt.Sprintf("%s/%s:block-builder-collateral", redisPrefix, prefix),
 	}, nil
 }
 
@@ -318,11 +318,11 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 }
 
 func (r *RedisCache) SetBuilderStatus(builderPubkey string, status common.BuilderStatus) (err error) {
-	return r.client.HSet(context.Background(), r.keyBuilderStatus, builderPubkey, uint8(status)).Err()
+	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, uint8(status)).Err()
 }
 
 func (r *RedisCache) GetBuilderStatus(builderPubkey string) (status common.BuilderStatus, err error) {
-	res, err := r.client.HGet(context.Background(), r.keyBuilderStatus, builderPubkey).Result()
+	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderStatus, builderPubkey).Result()
 	if errors.Is(err, redis.Nil) {
 		return status, nil
 	}
@@ -334,11 +334,11 @@ func (r *RedisCache) GetBuilderStatus(builderPubkey string) (status common.Build
 }
 
 func (r *RedisCache) SetBuilderCollateral(builderPubkey, value string) (err error) {
-	return r.client.HSet(context.Background(), r.keyBuilderCollateral, builderPubkey, value).Err()
+	return r.client.HSet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey, value).Err()
 }
 
 func (r *RedisCache) GetBuilderCollateral(builderPubkey string) (value string, err error) {
-	res, err := r.client.HGet(context.Background(), r.keyBuilderCollateral, builderPubkey).Result()
+	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", nil
 	}

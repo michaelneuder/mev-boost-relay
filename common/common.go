@@ -33,10 +33,10 @@ const (
 
 func (b BuilderStatus) String() string {
 	switch b {
-	case Optimistic:
-		return "optimistic"
 	case HighPrio:
 		return "high-prio"
+	case Optimistic:
+		return "optimistic"
 	case Blacklisted:
 		return "blacklisted"
 	default:
