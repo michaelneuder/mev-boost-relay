@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/flashbots/go-boost-utils/bls"
 	"github.com/flashbots/go-boost-utils/types"
 	"github.com/flashbots/mev-boost-relay/beaconclient"
@@ -273,4 +275,88 @@ func TestDataApiGetDataProposerPayloadDelivered(t *testing.T) {
 			require.Contains(t, rr.Body.String(), "invalid block_hash argument")
 		}
 	})
+}
+
+func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
+	// Setup test key pair.
+	sk, _, err := bls.GenerateNewKeypair()
+	require.NoError(t, err)
+	blsPubkey := bls.PublicKeyFromSecretKey(sk)
+	var pubkey types.PublicKey
+	err = pubkey.FromSlice(blsPubkey.Compress())
+	require.NoError(t, err)
+
+	// Test values.
+	slot := uint64(42)
+	feeRecipient := types.Address{0x02}
+	collateral := 1000
+	randao := "01234567890123456789012345678901"
+	var random types.Hash
+	err = random.FromSlice([]byte(randao))
+	require.NoError(t, err)
+	var txn hexutil.Bytes
+	err = txn.UnmarshalText([]byte("0x03"))
+	require.NoError(t, err)
+
+	// Setting up test backend.
+	backend := newTestBackend(t, 1)
+	backend.relay.expectedPrevRandao = randaoHelper{
+		slot:       slot,
+		prevRandao: random.String(),
+	}
+	backend.relay.genesisInfo = &beaconclient.GetGenesisResponse{}
+	backend.relay.genesisInfo.Data.GenesisTime = 0
+	backend.relay.proposerDutiesMap = map[uint64]*types.RegisterValidatorRequestMessage{
+		slot: &types.RegisterValidatorRequestMessage{
+			FeeRecipient: feeRecipient,
+			GasLimit:     5000,
+			Timestamp:    0xffffffff,
+			Pubkey:       types.PublicKey{},
+		},
+	}
+	backend.relay.opts.BlockBuilderAPI = true
+	backend.relay.beaconClient = beaconclient.NewMockMultiBeaconClient()
+	backend.relay.blockSimRateLimiter = &MockBlockSimulationRateLimiter{}
+	go backend.relay.StartServer()
+	time.Sleep(1 * time.Second)
+
+	// Set up request.
+	path := "/relay/v1/builder/blocks"
+	bidTrace := &types.BidTrace{
+		Slot:                 slot,
+		BuilderPubkey:        pubkey,
+		ProposerFeeRecipient: feeRecipient,
+		Value:                types.IntToU256(uint64(collateral) - 1),
+	}
+	signature, err := types.SignMessage(bidTrace, backend.relay.opts.EthNetDetails.DomainBuilder, sk)
+	require.NoError(t, err)
+	req := &types.BuilderSubmitBlockRequest{
+		Message:   bidTrace,
+		Signature: signature,
+		ExecutionPayload: &types.ExecutionPayload{
+			Timestamp:    slot * 12, // 12 seconds per slot.
+			Transactions: []hexutil.Bytes{txn},
+			Random:       random,
+		},
+	}
+
+	// Prepare redis.
+	err = backend.redis.SetStats(datastore.RedisStatsFieldSlotLastPayloadDelivered, req.Message.Slot-1)
+	require.NoError(t, err)
+	err = backend.redis.SetBuilderStatus(pubkey.String(), common.Optimistic)
+	require.NoError(t, err)
+	err = backend.redis.SetBuilderCollateral(pubkey.String(), strconv.Itoa(collateral))
+	require.NoError(t, err)
+
+	// Issue the request.
+	rr := backend.request(http.MethodPost, path, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	// Let updates happen async.
+	time.Sleep(2 * time.Second)
+
+	// Check status in redis is still optimistic.
+	outStatus, err := backend.redis.GetBuilderStatus(pubkey.String())
+	require.NoError(t, err)
+	require.Equal(t, outStatus, common.Optimistic)
 }

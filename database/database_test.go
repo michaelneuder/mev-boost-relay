@@ -28,9 +28,9 @@ func createValidatorRegistration(pubKey string) ValidatorRegistrationEntry {
 
 func resetDatabase(t *testing.T) *DatabaseService {
 	t.Helper()
-	if !runDBTests {
-		t.Skip("Skipping database tests")
-	}
+	// if !runDBTests {
+	// 	t.Skip("Skipping database tests")
+	// }
 
 	// Wipe test database
 	_db, err := sqlx.Connect("postgres", testDBDSN)
@@ -136,4 +136,8 @@ func TestMigrations(t *testing.T) {
 	err := db.DB.QueryRow(query).Scan(&rowCount)
 	require.NoError(t, err)
 	require.Equal(t, len(migrations.Migrations.Migrations), rowCount)
+}
+
+func TestUpsertBuilderDemotion(t *testing.T) {
+	_ = resetDatabase(t)
 }

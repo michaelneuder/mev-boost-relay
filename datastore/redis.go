@@ -318,7 +318,7 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 }
 
 func (r *RedisCache) SetBuilderStatus(builderPubkey string, status common.BuilderStatus) (err error) {
-	return r.client.HSet(context.Background(), r.keyBuilderStatus, builderPubkey, status).Err()
+	return r.client.HSet(context.Background(), r.keyBuilderStatus, builderPubkey, uint8(status)).Err()
 }
 
 func (r *RedisCache) GetBuilderStatus(builderPubkey string) (status common.BuilderStatus, err error) {

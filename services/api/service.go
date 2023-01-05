@@ -131,7 +131,7 @@ type RelayAPI struct {
 	proposerDutiesSlot       uint64
 	isUpdatingProposerDuties uberatomic.Bool
 
-	blockSimRateLimiter *BlockSimulationRateLimiter
+	blockSimRateLimiter IBlockSimRateLimiter
 
 	activeValidatorC chan types.PubkeyHex
 	validatorRegC    chan types.SignedValidatorRegistration
@@ -1113,7 +1113,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		var builderCollateral types.U256Str
 		err = builderCollateral.UnmarshalText([]byte(builderCollateralStr))
 		if err != nil {
-			log.WithError(err).Error("could parse builder collateral string")
+			log.WithError(err).Error("could not parse builder collateral string")
 			builderCollateral = ZeroU256
 		}
 
