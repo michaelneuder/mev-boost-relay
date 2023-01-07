@@ -5,10 +5,11 @@ import (
 )
 
 type MockBlockSimulationRateLimiter struct {
+	simulationError error
 }
 
 func (m *MockBlockSimulationRateLimiter) send(context context.Context, payload *BuilderBlockValidationRequest, isHighPrio bool) error {
-	return nil
+	return m.simulationError
 }
 
 func (m *MockBlockSimulationRateLimiter) currentCounter() int64 {

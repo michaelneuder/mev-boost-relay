@@ -7,7 +7,11 @@ import (
 	"github.com/flashbots/mev-boost-relay/common"
 )
 
-type MockDB struct{}
+type MockDB struct {
+	Builders  map[string]*BlockBuilderEntry
+	Demotions map[string]bool
+	Refunds   map[string]bool
+}
 
 func (db MockDB) NumRegisteredValidators() (count uint64, err error) {
 	return 0, nil
@@ -86,10 +90,12 @@ func (db MockDB) GetBlockBuilders() ([]*BlockBuilderEntry, error) {
 }
 
 func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error) {
-	return nil, nil
+	return db.Builders[pubkey], nil
 }
 
 func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
+	builder := db.Builders[pubkey]
+	builder.Status = uint8(builderStatus)
 	return nil
 }
 
@@ -102,9 +108,22 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 }
 
 func (db MockDB) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	pk := bidTrace.BuilderPubkey.String()
+	db.Demotions[pk] = true
+
+	// Refundable case.
+	if signedBlindedBeaconBlock != nil && signedValidatorRegistration != nil {
+		db.Refunds[pk] = true
+	}
 	return nil
 }
 
 func (db MockDB) GetBlockBuildersFromCollateralID(collateralID uint64) ([]*BlockBuilderEntry, error) {
-	return nil, nil
+	res := []*BlockBuilderEntry{}
+	for _, v := range db.Builders {
+		if v.CollateralID == collateralID {
+			res = append(res, v)
+		}
+	}
+	return res, nil
 }
