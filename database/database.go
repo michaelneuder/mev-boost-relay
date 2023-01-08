@@ -46,7 +46,7 @@ type IDatabaseService interface {
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 	GetBlockBuildersFromCollateralID(collateralID uint64) ([]*BlockBuilderEntry, error)
 
-	UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
+	UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
 }
 
 type DatabaseService struct {
@@ -490,17 +490,18 @@ func (s *DatabaseService) DeleteExecutionPayloads(idFirst, idLast uint64) error 
 	return err
 }
 
-func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
-	if bidTrace == nil {
-		return fmt.Errorf("nil bidTrace invalid for UpsertBuilderDemotion")
+func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	if submitBlockRequest == nil {
+		return fmt.Errorf("nil submitBlockRequest invalid for UpsertBuilderDemotion")
 	}
 
-	_bidTrace, err := json.Marshal(bidTrace)
+	_submitBlockRequest, err := json.Marshal(submitBlockRequest)
 	if err != nil {
 		return err
 	}
+	bidTrace := submitBlockRequest.Message
 	builderDemotionEntry := BuilderDemotionEntry{
-		UnsignedBidTrace: NewNullString(string(_bidTrace)),
+		SubmitBlockRequest: NewNullString(string(_submitBlockRequest)),
 
 		Slot:  bidTrace.Slot,
 		Epoch: bidTrace.Slot / uint64(common.SlotsPerEpoch),
@@ -535,8 +536,8 @@ func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, sig
 	// If block_hash conflicts and we have a published block, fill in fields needed for the refund.
 	if signedBlindedBeaconBlock != nil && signedValidatorRegistration != nil {
 		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
-			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
-			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			(submit_block_request, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:submit_block_request, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
 			ON CONFLICT (block_hash) DO UPDATE SET
 				signed_blinded_beacon_block = :signed_blinded_beacon_block,
 				signed_validator_registration = :signed_validator_registration,
@@ -546,8 +547,8 @@ func (s *DatabaseService) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, sig
 	} else {
 		// If the block_hash conflicts, then all the relevant data must be there already.
 		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
-			(unsigned_bid_trace, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
-			(:unsigned_bid_trace, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			(submit_block_request, signed_blinded_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:submit_block_request, :signed_blinded_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
 			ON CONFLICT (block_hash) DO NOTHING`
 	}
 	_, err = s.DB.NamedExec(query, builderDemotionEntry)

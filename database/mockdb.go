@@ -107,8 +107,8 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 	return nil
 }
 
-func (db MockDB) UpsertBuilderDemotion(bidTrace *common.BidTraceV2, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
-	pk := bidTrace.BuilderPubkey.String()
+func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	pk := submitBlockRequest.Message.BuilderPubkey.String()
 	db.Demotions[pk] = true
 
 	// Refundable case.

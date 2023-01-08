@@ -205,7 +205,7 @@ type BuilderDemotionEntry struct {
 	ID         int64     `db:"id"`
 	InsertedAt time.Time `db:"inserted_at"`
 
-	UnsignedBidTrace            sql.NullString `db:"unsigned_bid_trace"`
+	SubmitBlockRequest          sql.NullString `db:"submit_block_request"`
 	SignedBlindedBeaconBlock    sql.NullString `db:"signed_blinded_beacon_block"`
 	SignedValidatorRegistration sql.NullString `db:"signed_validator_registration"`
 

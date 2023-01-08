@@ -455,13 +455,10 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			// Validation failed, demote all builders with the collateral id.
 			api.demoteBuildersByCollateralID(builderPubkey)
 
-			bidTrace := &common.BidTraceV2{
-				BidTrace: *opts.req.Message,
-			}
 			// Upsert into the builder demotion table but without the
 			// blinded block or the validator registration, because we don't
 			// know if this bid will be accepted.
-			err = api.db.UpsertBuilderDemotion(bidTrace, nil, nil)
+			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil, nil)
 			if err != nil {
 				api.log.WithError(err).Error("could not upsert bid trace")
 			}
@@ -926,16 +923,17 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 
 		// Check if the block was valid in the optimistic case.
 		if builderStatus == common.Optimistic {
+			submitBlockReq := types.BuilderSubmitBlockRequest{
+				Signature:        payload.Signature,
+				Message:          &bidTrace.BidTrace,
+				ExecutionPayload: getPayloadResp.Data,
+			}
 			simErr := api.simulateBlock(blockSimOptions{
 				ctx:      req.Context(),
 				log:      log,
 				highPrio: true, // manually set to true for these blocks.
 				req: &BuilderBlockValidationRequest{
-					BuilderSubmitBlockRequest: types.BuilderSubmitBlockRequest{
-						Signature:        payload.Signature,
-						Message:          &bidTrace.BidTrace,
-						ExecutionPayload: getPayloadResp.Data,
-					},
+					BuilderSubmitBlockRequest: submitBlockReq,
 				},
 			})
 			if simErr != nil {
@@ -960,7 +958,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 					}
 				}
 
-				err = api.db.UpsertBuilderDemotion(bidTrace, payload, signedRegistration)
+				err = api.db.UpsertBuilderDemotion(&submitBlockReq, payload, signedRegistration)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
 						"bidTrace":                    bidTrace,
