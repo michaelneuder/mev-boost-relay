@@ -944,6 +944,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				// Validation failed, demote all builders with the collateral id.
 				api.demoteBuildersByCollateralID(builderPubkey)
 
+				signedRegistration := &types.SignedValidatorRegistration{}
 				registrationEntry, err := api.db.GetValidatorRegistration(bidTrace.ProposerPubkey.String())
 				if err != nil {
 					if errors.Is(err, sql.ErrNoRows) {
@@ -952,11 +953,13 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 						api.log.WithError(err).Error("error getting validator registration")
 					}
 				}
-
-				signedRegistration, err := registrationEntry.ToSignedValidatorRegistration()
-				if err != nil {
-					api.log.WithError(err).Error("error converting registration entry to signed validator registration")
+				if registrationEntry != nil {
+					signedRegistration, err = registrationEntry.ToSignedValidatorRegistration()
+					if err != nil {
+						api.log.WithError(err).Error("error converting registration entry to signed validator registration")
+					}
 				}
+
 				err = api.db.UpsertBuilderDemotion(bidTrace, payload, signedRegistration)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
