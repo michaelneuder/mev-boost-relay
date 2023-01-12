@@ -19,6 +19,11 @@ var (
 	ErrSimulationFailed = errors.New("simulation failed")
 )
 
+type IBlockSimRateLimiter interface {
+	send(context context.Context, payload *BuilderBlockValidationRequest, isHighPrio bool) error
+	currentCounter() int64
+}
+
 var maxConcurrentBlocks = int64(cli.GetEnvInt("BLOCKSIM_MAX_CONCURRENT", 4)) // 0 for no maximum
 
 type BlockSimulationRateLimiter struct {

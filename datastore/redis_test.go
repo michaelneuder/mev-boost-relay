@@ -256,3 +256,41 @@ func TestRedisURIs(t *testing.T) {
 	_, err = NewRedisCache(malformURL, "")
 	require.Error(t, err)
 }
+
+func TestBuilderStatus(t *testing.T) {
+	builderPK := "0xdeadbeef"
+	cache := setupTestRedis(t)
+
+	// Base status should be low-prio.
+	status, err := cache.GetBuilderStatus(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, status, common.LowPrio)
+
+	// Update to optimisitic.
+	err = cache.SetBuilderStatus(builderPK, common.Optimistic)
+	require.NoError(t, err)
+
+	// Now status should be optimistic.
+	status, err = cache.GetBuilderStatus(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, status, common.Optimistic)
+}
+
+func TestBuilderCollateral(t *testing.T) {
+	builderPK := "0xdeadbeef"
+	cache := setupTestRedis(t)
+
+	// Base collateral should be an empty string.
+	collateral, err := cache.GetBuilderCollateral(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, collateral, "")
+
+	// Update to be non-empty string.
+	err = cache.SetBuilderCollateral(builderPK, "12345")
+	require.NoError(t, err)
+
+	// Now collateral should be "12345".
+	collateral, err = cache.GetBuilderCollateral(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, collateral, "12345")
+}
