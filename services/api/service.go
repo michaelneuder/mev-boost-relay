@@ -331,8 +331,6 @@ func (api *RelayAPI) StartServer() (err error) {
 		for {
 			headEvent := <-c
 			api.processNewSlot(headEvent.Slot)
-			// TODO(mikeneuder): Add checks to make sure we haven't
-			// optimistically built on top of a non-simulated slot.
 		}
 	}()
 
@@ -923,6 +921,12 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 
 		// Check if the block was valid in the optimistic case.
 		if builderStatus == common.Optimistic {
+			// Set to high-prio while we process the winning block.
+			err = api.redis.SetBuilderStatus(bidTrace.BuilderPubkey.String(), common.HighPrio)
+			if err != nil {
+				log.WithError(err).Error("failed to set builder builder status")
+			}
+
 			submitBlockReq := types.BuilderSubmitBlockRequest{
 				Signature:        payload.Signature,
 				Message:          &bidTrace.BidTrace,
@@ -965,6 +969,12 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 						"signedBlindedBeaconBlock":    payload,
 						"signedValidatorRegistration": signedRegistration,
 					}).Error("failed to save validator refund to database")
+				}
+			} else {
+				// Set back to optimistic because the simulation was successful.
+				err = api.redis.SetBuilderStatus(bidTrace.BuilderPubkey.String(), common.Optimistic)
+				if err != nil {
+					log.WithError(err).Error("failed to set builder builder status")
 				}
 			}
 		}
