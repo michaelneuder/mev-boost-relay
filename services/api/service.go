@@ -1089,7 +1089,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	if builderStatus == common.Blacklisted {
 		log.Info("builder is blacklisted")
-		api.RespondError(w, http.StatusForbidden, fmt.Sprintf("builder with pubkey %x is blacklisted", payload.Message.BuilderPubkey.String()))
+		api.RespondError(w, http.StatusForbidden, fmt.Sprintf("builder with pubkey %x is blacklisted", payload.Message.BuilderPubkey.PubkeyHex().String()))
 		return
 	}
 
