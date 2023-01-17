@@ -73,7 +73,7 @@ var (
 	apiIdleTimeoutMs       = cli.GetEnvInt("API_TIMEOUT_IDLE_MS", 3000)
 
 	// number of goroutines to pull from the optimistic block channel.
-	numOptimisticBlockProcessors = cli.GetEnvInt("NUM_OPTIMISTIC_BLOCK_PROCESSORS", 10)
+	numOptimisticBlockProcessors = cli.GetEnvInt("NUM_OPTIMISTIC_BLOCK_PROCESSORS", 100)
 )
 
 // RelayAPIOpts contains the options for a relay
@@ -429,25 +429,18 @@ func (api *RelayAPI) demoteBuildersByCollateralID(builderPubkey string) {
 	if err != nil {
 		api.log.WithError(err).Error("unable to get builder from database")
 	}
-	collateralID := builder.CollateralID
 
-	// Fetch additional builder pubkeys using the collateral_id.
-	allBuilders, err := api.db.GetBlockBuildersFromCollateralID(collateralID)
+	// Fetch all builder pubkeys using the collateral_id.
+	builderPubkeys, err := api.db.GetBlockBuilderPubkeysByCollateralID(builder.CollateralID)
 	if err != nil {
 		api.log.WithError(err).Error("unable to get builders from collateral id")
 	}
 
 	// Demote all the pubkeys in both redis and the db.
-	for _, b := range allBuilders {
-		pk := b.BuilderPubkey
-		err = api.redis.SetBlockBuilderStatus(pk, common.LowPrio)
+	for _, pubkey := range builderPubkeys {
+		err := api.datastore.SetBlockBuilderStatus(pubkey, common.LowPrio)
 		if err != nil {
-			api.log.WithError(err).Error("could not set builder status in redis")
-		}
-
-		err = api.db.SetBlockBuilderStatus(pk, common.LowPrio)
-		if err != nil {
-			api.log.WithError(err).Error("could not set builder status in database")
+			api.log.WithError(err).Error("failed to set block builder status in the datastore")
 		}
 	}
 }
@@ -465,7 +458,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			// Upsert into the builder demotion table but without the
 			// blinded block or the validator registration, because we don't
 			// know if this bid will be accepted.
-			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil, nil)
+			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil)
 			if err != nil {
 				api.log.WithError(err).Error("could not upsert bid trace")
 			}
@@ -931,9 +924,9 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		// Check if the block was valid in the optimistic case.
 		if builderStatus == common.Optimistic {
 			// Set to high-prio while we process the winning block.
-			err = api.redis.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.HighPrio)
+			err := api.datastore.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.HighPrio)
 			if err != nil {
-				log.WithError(err).Error("failed to set builder builder status")
+				api.log.WithError(err).Error("failed to set block builder status in the datastore")
 			}
 
 			submitBlockReq := types.BuilderSubmitBlockRequest{
@@ -955,36 +948,20 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				// Validation failed, demote all builders with the collateral id.
 				api.demoteBuildersByCollateralID(builderPubkey)
 
-				signedRegistration := &types.SignedValidatorRegistration{}
-				registrationEntry, err := api.db.GetValidatorRegistration(bidTrace.ProposerPubkey.String())
-				if err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						api.log.WithError(err).Error("no validator registration found")
-					} else {
-						api.log.WithError(err).Error("error getting validator registration")
-					}
-				}
-				if registrationEntry != nil {
-					signedRegistration, err = registrationEntry.ToSignedValidatorRegistration()
-					if err != nil {
-						api.log.WithError(err).Error("error converting registration entry to signed validator registration")
-					}
-				}
-
-				err = api.db.UpsertBuilderDemotion(&submitBlockReq, payload, signedRegistration)
+				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
+				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
-						"bidTrace":                    bidTrace,
-						"signedBlindedBeaconBlock":    payload,
-						"signedValidatorRegistration": signedRegistration,
+						"bidTrace":          bidTrace,
+						"signedBeaconBlock": signedBeaconBlock,
 					}).Error("failed to save validator refund to database")
 				}
 				return
 			}
 			// Set back to optimistic because the simulation was successful.
-			err = api.redis.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.Optimistic)
+			err = api.datastore.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.Optimistic)
 			if err != nil {
-				log.WithError(err).Error("failed to set builder builder status")
+				api.log.WithError(err).Error("failed to set block builder status in the datastore")
 			}
 		}
 	}()
@@ -1112,8 +1089,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	if builderStatus == common.Blacklisted {
 		log.Info("builder is blacklisted")
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		api.RespondError(w, http.StatusForbidden, fmt.Sprintf("builder with pubkey %x is blacklisted", payload.Message.BuilderPubkey.String()))
 		return
 	}
 
@@ -1121,7 +1097,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	if builderStatus == common.Optimistic {
 		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
-			log.WithError(err).Error("could not get block builder collateral")
+			log.WithError(err).Error("could not get block builder collateral string")
 			builderCollateralStr = ""
 		}
 
@@ -1380,28 +1356,22 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 		isBlacklisted := args.Get("blacklisted") == "true"
 		api.log.WithFields(logrus.Fields{
 			"builderPubkey": builderPubkey,
-			"isOptimistic":  isOptimistic,
 			"isHighPrio":    isHighPrio,
+			"isOptimistic":  isOptimistic,
 			"isBlacklisted": isBlacklisted,
 		}).Info("updating builder status")
 		status := common.LowPrio
-		if isBlacklisted {
-			status = common.Blacklisted
+		if isHighPrio {
+			status = common.HighPrio
 		} else if isOptimistic {
 			status = common.Optimistic
-		} else if isHighPrio {
-			status = common.HighPrio
+		} else if isBlacklisted {
+			status = common.Blacklisted
 		}
-		err := api.redis.SetBlockBuilderStatus(builderPubkey, status)
+		err := api.datastore.SetBlockBuilderStatus(builderPubkey, status)
 		if err != nil {
-			api.log.WithError(err).Error("could not set builder status in redis")
+			api.log.WithError(err).Error("failed to set block builder status in the datastore")
 		}
-
-		err = api.db.SetBlockBuilderStatus(builderPubkey, status)
-		if err != nil {
-			api.log.WithError(err).Error("could not set builder status in database")
-		}
-
 		api.RespondOK(w, struct{ newStatus string }{newStatus: status.String()})
 	}
 }

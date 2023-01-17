@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/flashbots/go-boost-utils/types"
+	"github.com/flashbots/mev-boost-relay/common"
 	"github.com/flashbots/mev-boost-relay/database"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -141,4 +142,18 @@ func (ds *Datastore) GetGetPayloadResponse(slot uint64, proposerPubkey, blockHas
 		Version: types.VersionString(blockSubEntry.Version),
 		Data:    executionPayload,
 	}, nil
+}
+
+// SetBlockBuilderStatus sets the status of a pubkey in both Redis and the database.
+func (ds *Datastore) SetBlockBuilderStatus(pubkey string, status common.BuilderStatus) error {
+	err := ds.redis.SetBlockBuilderStatus(pubkey, status)
+	if err != nil {
+		ds.log.WithError(err).Error("failed to set block builder status in redis")
+	}
+
+	err = ds.db.SetBlockBuilderStatus(pubkey, status)
+	if err != nil {
+		ds.log.WithError(err).Error("failed to set block builder status in database")
+	}
+	return errors.Wrap(err, "failed to set block builder status in database")
 }

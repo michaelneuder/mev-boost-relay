@@ -190,7 +190,7 @@ type BlockBuilderEntry struct {
 
 	Status          uint8  `db:"status"            json:"status"`
 	CollateralValue string `db:"collateral_value"  json:"collateral_value"`
-	CollateralID    uint64 `db:"collateral_id"     json:"collateral_id"`
+	CollateralID    string `db:"collateral_id"     json:"collateral_id"`
 
 	LastSubmissionID   sql.NullInt64 `db:"last_submission_id"   json:"last_submission_id"`
 	LastSubmissionSlot uint64        `db:"last_submission_slot" json:"last_submission_slot"`
@@ -205,9 +205,8 @@ type BuilderDemotionEntry struct {
 	ID         int64     `db:"id"`
 	InsertedAt time.Time `db:"inserted_at"`
 
-	SubmitBlockRequest          sql.NullString `db:"submit_block_request"`
-	SignedBlindedBeaconBlock    sql.NullString `db:"signed_blinded_beacon_block"`
-	SignedValidatorRegistration sql.NullString `db:"signed_validator_registration"`
+	SubmitBlockRequest sql.NullString `db:"submit_block_request"`
+	SignedBeaconBlock  sql.NullString `db:"signed_beacon_block"`
 
 	Slot  uint64 `db:"slot"`
 	Epoch uint64 `db:"epoch"`

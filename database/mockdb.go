@@ -105,10 +105,10 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 	return nil
 }
 
-func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBlindedBeaconBlock *types.SignedBlindedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock) error {
 	return nil
 }
 
-func (db MockDB) GetBlockBuildersFromCollateralID(collateralID uint64) ([]*BlockBuilderEntry, error) {
+func (db MockDB) GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error) {
 	return nil, nil
 }
