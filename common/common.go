@@ -39,11 +39,11 @@ func (b BuilderStatus) String() string {
 	case HighPrio:
 		return "high-prio"
 	case OptimisticActive:
-		return "optimisticActive"
+		return "optimistic-active"
 	case OptimisticLocked:
-		return "optimisticLocked"
+		return "optimistic-locked"
 	case OptimisticDemoted:
-		return "optimisticDemoted"
+		return "optimistic-demoted"
 	case Blacklisted:
 		return "blacklisted"
 	default:

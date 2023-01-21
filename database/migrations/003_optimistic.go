@@ -55,6 +55,6 @@ var Migration003Optimistic = &migrate.Migration{
 	`},
 	Down: []string{},
 
-	DisableTransactionUp:   true, // cannot create index concurrently inside a transaction
+	DisableTransactionUp:   true,
 	DisableTransactionDown: true,
 }
