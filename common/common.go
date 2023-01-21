@@ -26,12 +26,12 @@ type HTTPServerTimeouts struct {
 type BuilderStatus uint8
 
 const (
-	LowPrio BuilderStatus = iota
-	HighPrio
-	OptimisticActive
-	OptimisticLocked
-	OptimisticDemoted
-	Blacklisted
+	LowPrio           BuilderStatus = iota // 0
+	HighPrio                               // 1
+	OptimisticActive                       // 2
+	OptimisticLocked                       // 3
+	OptimisticDemoted                      // 4
+	Blacklisted                            // 5
 )
 
 func (b BuilderStatus) String() string {
