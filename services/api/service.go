@@ -934,15 +934,16 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			log.WithError(err).Error("failed to get builder status")
 		}
 
-		submitBlockReq := types.BuilderSubmitBlockRequest{
-			Signature:        payload.Signature,
-			Message:          &bidTrace.BidTrace,
-			ExecutionPayload: getPayloadResp.Data,
-		}
 		// Check if the block was valid in the optimisticActive case.
-		if builderStatus == common.OptimisticActive {
+		if builderStatus == common.OptimisticActive || builderStatus == common.OptimisticDemoted {
 			// Set to locked while we process the winning block.
 			api.setStatusByCollateralID(bidTrace.BuilderPubkey.String(), common.OptimisticLocked)
+			submitBlockReq := types.BuilderSubmitBlockRequest{
+				Signature:        payload.Signature,
+				Message:          &bidTrace.BidTrace,
+				ExecutionPayload: getPayloadResp.Data,
+			}
+
 			simErr := api.simulateBlock(blockSimOptions{
 				ctx:      req.Context(),
 				log:      log,
@@ -970,18 +971,6 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			}
 			// Set to active because simulation succeeded.
 			api.setStatusByCollateralID(bidTrace.BuilderPubkey.String(), common.OptimisticActive)
-		} else if builderStatus == common.OptimisticDemoted {
-			// If the builder has already been demoted, insert the signedBeaconBlock
-			// for the refund justification.
-			signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
-			err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock)
-			if err != nil {
-				log.WithError(err).WithFields(logrus.Fields{
-					"bidTrace":               bidTrace,
-					"signedBeaconBlock":      signedBeaconBlock,
-					"errorWritingRefundToDB": true,
-				}).Error("failed to save validator refund to database")
-			}
 		}
 	}()
 
