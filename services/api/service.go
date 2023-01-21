@@ -471,7 +471,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			// Upsert into the builder demotion table but without the
 			// blinded block or the validator registration, because we don't
 			// know if this bid will be accepted.
-			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil)
+			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil, nil)
 			if err != nil {
 				api.log.WithError(err).Error("could not upsert bid trace")
 			}
@@ -934,7 +934,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			log.WithError(err).Error("failed to get builder status")
 		}
 
-		// Check if the block was valid in the optimisticActive case.
+		// Check if the block was valid if the builder is OptimisticActive or OptimisticDemoted.
 		if builderStatus == common.OptimisticActive || builderStatus == common.OptimisticDemoted {
 			// Set to locked while we process the winning block.
 			api.setStatusByCollateralID(bidTrace.BuilderPubkey.String(), common.OptimisticLocked)
@@ -953,18 +953,39 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				},
 			})
 			if simErr != nil {
-				log.WithError(err).Error("failed to simulate signed block")
+				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
+				log = log.WithFields(logrus.Fields{
+					"bidTrace":          bidTrace,
+					"signedBeaconBlock": signedBeaconBlock,
+				})
+				log.WithError(simErr).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, demote all builders with the collateral id.
 				api.setStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
 
-				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
-				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock)
+				// Get registration entry from the DB.
+				registrationEntry, err := api.db.GetValidatorRegistration(builderPubkey)
+				if err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						log.WithError(err).Error("no registration found for validator " + builderPubkey)
+					} else {
+						log.WithError(err).Error("error reading validator registration")
+					}
+				}
+				var signedRegistration *types.SignedValidatorRegistration
+				if registrationEntry != nil {
+					signedRegistration, err = registrationEntry.ToSignedValidatorRegistration()
+					if err != nil {
+						log.WithError(err).Error("error converting registration to signed registration")
+					}
+				}
+
+				// Write to demotions table.
+				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock, signedRegistration)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
-						"bidTrace":               bidTrace,
-						"signedBeaconBlock":      signedBeaconBlock,
-						"errorWritingRefundToDB": true,
+						"signedValidatorRegistration": signedRegistration,
+						"errorWritingRefundToDB":      true,
 					}).Error("failed to save validator refund to database")
 				}
 				return

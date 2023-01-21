@@ -105,7 +105,7 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 	return nil
 }
 
-func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock) error {
+func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
 	return nil
 }
 
