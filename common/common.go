@@ -28,7 +28,9 @@ type BuilderStatus uint8
 const (
 	LowPrio BuilderStatus = iota
 	HighPrio
-	Optimistic
+	OptimisticActive
+	OptimisticLocked
+	OptimisticDemoted
 	Blacklisted
 )
 
@@ -36,8 +38,12 @@ func (b BuilderStatus) String() string {
 	switch b {
 	case HighPrio:
 		return "high-prio"
-	case Optimistic:
-		return "optimistic"
+	case OptimisticActive:
+		return "optimisticActive"
+	case OptimisticLocked:
+		return "optimisticLocked"
+	case OptimisticDemoted:
+		return "optimisticDemoted"
 	case Blacklisted:
 		return "blacklisted"
 	default:

@@ -421,9 +421,10 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	return nil
 }
 
-// Demotes a set of builders who have matching collateral IDs. This function
-// continues to try demoting even if an error is encountered for any builder.
-func (api *RelayAPI) demoteBuildersByCollateralID(builderPubkey string) {
+// Modifies the status of a set of builders who have matching collateral IDs.
+// This function continues to try demoting even if an error is encountered for
+// public key.
+func (api *RelayAPI) setStatusByCollateralID(builderPubkey string, status common.BuilderStatus) {
 	// Fetch builder collateral_id.
 	builder, err := api.db.GetBlockBuilderByPubkey(builderPubkey)
 	if err != nil {
@@ -438,7 +439,7 @@ func (api *RelayAPI) demoteBuildersByCollateralID(builderPubkey string) {
 
 	// Demote all the pubkeys in both redis and the db.
 	for _, pubkey := range builderPubkeys {
-		err := api.datastore.SetBlockBuilderStatus(pubkey, common.LowPrio)
+		err := api.datastore.SetBlockBuilderStatus(pubkey, status)
 		if err != nil {
 			api.log.WithError(err).Error("failed to set block builder status in the datastore")
 		}
@@ -448,12 +449,24 @@ func (api *RelayAPI) demoteBuildersByCollateralID(builderPubkey string) {
 // startOptimisticBlockProcessor keeps listening on the channel and validating incoming blocks asynchronously.
 func (api *RelayAPI) startOptimisticBlockProcessor() {
 	for opts := range api.optimisticBlockC {
-		err := api.simulateBlock(opts)
+		builderPubkey := opts.req.Message.BuilderPubkey.String()
+		builderStatus, err := api.redis.GetBlockBuilderStatus(builderPubkey)
+		opts.log.WithFields(logrus.Fields{
+			"builderStatus": builderStatus.String(),
+		})
+		if err != nil {
+			opts.log.WithError(err).Error("could not get block builder status (defaulting to low-prio)")
+		}
+
+		// Skip simulation if the status is no longer OptimisticActive.
+		if builderStatus != common.OptimisticActive {
+			continue
+		}
+		err = api.simulateBlock(opts)
 		if err != nil {
 			api.log.WithError(err).Error("block simulation failed")
-			builderPubkey := opts.req.Message.BuilderPubkey.String()
 			// Validation failed, demote all builders with the collateral id.
-			api.demoteBuildersByCollateralID(builderPubkey)
+			api.setStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
 
 			// Upsert into the builder demotion table but without the
 			// blinded block or the validator registration, because we don't
@@ -921,13 +934,10 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			log.WithError(err).Error("failed to get builder status")
 		}
 
-		// Check if the block was valid in the optimistic case.
-		if builderStatus == common.Optimistic {
-			// Set to high-prio while we process the winning block.
-			err := api.datastore.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.HighPrio)
-			if err != nil {
-				api.log.WithError(err).Error("failed to set block builder status in the datastore")
-			}
+		// Check if the block was valid in the optimisticActive case.
+		if builderStatus == common.OptimisticActive {
+			// Set to locked while we process the winning block.
+			api.setStatusByCollateralID(bidTrace.BuilderPubkey.String(), common.OptimisticLocked)
 
 			submitBlockReq := types.BuilderSubmitBlockRequest{
 				Signature:        payload.Signature,
@@ -946,7 +956,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				log.WithError(err).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, demote all builders with the collateral id.
-				api.demoteBuildersByCollateralID(builderPubkey)
+				api.setStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
 
 				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
 				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock)
@@ -958,10 +968,23 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				}
 				return
 			}
-			// Set back to optimistic because the simulation was successful.
-			err = api.datastore.SetBlockBuilderStatus(bidTrace.BuilderPubkey.String(), common.Optimistic)
+			// Set to active because simulation succeeded.
+			api.setStatusByCollateralID(bidTrace.BuilderPubkey.String(), common.OptimisticActive)
+		} else if builderStatus == common.OptimisticDemoted {
+			// If the builder has already been demoted, insert the signedBeaconBlock
+			// for the refund justification.
+			signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
+			submitBlockReq := types.BuilderSubmitBlockRequest{
+				Signature:        payload.Signature,
+				Message:          &bidTrace.BidTrace,
+				ExecutionPayload: getPayloadResp.Data,
+			}
+			err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock)
 			if err != nil {
-				api.log.WithError(err).Error("failed to set block builder status in the datastore")
+				log.WithError(err).WithFields(logrus.Fields{
+					"bidTrace":          bidTrace,
+					"signedBeaconBlock": signedBeaconBlock,
+				}).Error("failed to save validator refund to database")
 			}
 		}
 	}()
@@ -1087,14 +1110,8 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		log.WithError(err).Error("could not get block builder status")
 	}
 
-	if builderStatus == common.Blacklisted {
-		log.Info("builder is blacklisted")
-		api.RespondError(w, http.StatusForbidden, fmt.Sprintf("builder with pubkey %x is blacklisted", payload.Message.BuilderPubkey.PubkeyHex().String()))
-		return
-	}
-
 	// Check for collateral in optimistic case.
-	if builderStatus == common.Optimistic {
+	if builderStatus == common.OptimisticActive {
 		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
 			log.WithError(err).Error("could not get block builder collateral string")
@@ -1143,6 +1160,13 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	} else if slotDuty.FeeRecipient != payload.Message.ProposerFeeRecipient {
 		log.Info("fee recipient does not match")
 		api.RespondError(w, http.StatusBadRequest, "fee recipient does not match")
+		return
+	}
+
+	if builderStatus == common.Blacklisted {
+		log.Info("builder is blacklisted")
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -1225,7 +1249,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	// Construct simulation request.
 	opts := blockSimOptions{
 		ctx:      req.Context(),
-		highPrio: builderStatus == common.HighPrio || builderStatus == common.Optimistic,
+		highPrio: builderStatus == common.HighPrio || builderStatus == common.OptimisticActive || builderStatus == common.OptimisticLocked,
 		log:      log,
 		req: &BuilderBlockValidationRequest{
 			BuilderSubmitBlockRequest: *payload,
@@ -1233,11 +1257,11 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		},
 	}
 
-	// Only perform simulation on hot path if we are in non-optimistic mode.
-	if builderStatus == common.Optimistic {
-		// Write optimistic block to channel for async validation.
+	// Write optimistic block to channel for async validation.
+	if builderStatus == common.OptimisticActive {
 		api.optimisticBlockC <- opts
 	} else {
+		// Simulate block for non-OptimisticActive builders.
 		simErr = api.simulateBlock(opts)
 		if simErr != nil {
 			api.RespondError(w, http.StatusBadRequest, simErr.Error())
@@ -1351,26 +1375,39 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 		return
 	} else if req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch {
 		args := req.URL.Query()
-		isOptimistic := args.Get("optimistic") == "true"
+		isOptimisticActive := args.Get("optimistic_active") == "true"
+		isOptimisticLocked := args.Get("optimistic_locked") == "true"
+		isOptimisticDemoted := args.Get("optimistic_demoted") == "true"
+		useCollateralID := args.Get("use_collateral_id") == "true"
 		isHighPrio := args.Get("high_prio") == "true"
 		isBlacklisted := args.Get("blacklisted") == "true"
 		api.log.WithFields(logrus.Fields{
-			"builderPubkey": builderPubkey,
-			"isHighPrio":    isHighPrio,
-			"isOptimistic":  isOptimistic,
-			"isBlacklisted": isBlacklisted,
+			"builderPubkey":       builderPubkey,
+			"isHighPrio":          isHighPrio,
+			"isOptimisticActive":  isOptimisticActive,
+			"isOptimisticLocked":  isOptimisticLocked,
+			"isOptimisticDemoted": isOptimisticDemoted,
+			"isBlacklisted":       isBlacklisted,
 		}).Info("updating builder status")
 		status := common.LowPrio
 		if isHighPrio {
 			status = common.HighPrio
-		} else if isOptimistic {
-			status = common.Optimistic
+		} else if isOptimisticActive {
+			status = common.OptimisticActive
+		} else if isOptimisticLocked {
+			status = common.OptimisticLocked
+		} else if isOptimisticDemoted {
+			status = common.OptimisticDemoted
 		} else if isBlacklisted {
 			status = common.Blacklisted
 		}
-		err := api.datastore.SetBlockBuilderStatus(builderPubkey, status)
-		if err != nil {
-			api.log.WithError(err).Error("failed to set block builder status in the datastore")
+		if useCollateralID {
+			api.setStatusByCollateralID(builderPubkey, status)
+		} else {
+			err := api.datastore.SetBlockBuilderStatus(builderPubkey, status)
+			if err != nil {
+				api.log.WithError(err).Error("failed to set block builder status in the datastore")
+			}
 		}
 		api.RespondOK(w, struct{ newStatus string }{newStatus: status.String()})
 	}
