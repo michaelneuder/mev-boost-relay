@@ -72,7 +72,7 @@ var (
 	apiWriteTimeoutMs      = cli.GetEnvInt("API_TIMEOUT_WRITE_MS", 10000)
 	apiIdleTimeoutMs       = cli.GetEnvInt("API_TIMEOUT_IDLE_MS", 3000)
 
-	// number of goroutines to pull from the optimistic block channel.
+	// number of goroutines to pull from the optimistic block channel
 	numOptimisticBlockProcessors = cli.GetEnvInt("NUM_OPTIMISTIC_BLOCK_PROCESSORS", 100)
 )
 
@@ -459,7 +459,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 		}
 
 		// Skip simulation if the status is no longer OptimisticActive.
-		if builderStatus != common.OptimisticActive {
+		if builderStatus == common.OptimisticDemoted {
 			continue
 		}
 		err = api.simulateBlock(opts)
@@ -469,11 +469,11 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			api.setStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
 
 			// Upsert into the builder demotion table but without the
-			// blinded block or the validator registration, because we don't
-			// know if this bid will be accepted.
+			// signed block and signed registration, because we don't know if
+			// this bid will be accepted.
 			err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil, nil)
 			if err != nil {
-				api.log.WithError(err).Error("could not upsert bid trace")
+				api.log.WithError(err).Error("could not upsert builder demotion")
 			}
 		}
 	}
@@ -955,8 +955,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 			if simErr != nil {
 				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
 				log = log.WithFields(logrus.Fields{
-					"bidTrace":          bidTrace,
-					"signedBeaconBlock": signedBeaconBlock,
+					"bidTrace": bidTrace,
 				})
 				log.WithError(simErr).Error("failed to simulate signed block")
 				builderPubkey := bidTrace.BuilderPubkey.String()
@@ -984,6 +983,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock, signedRegistration)
 				if err != nil {
 					log.WithError(err).WithFields(logrus.Fields{
+						"signedBeaconBlock":           signedBeaconBlock,
 						"signedValidatorRegistration": signedRegistration,
 						"errorWritingRefundToDB":      true,
 					}).Error("failed to save validator refund to database")
@@ -1121,7 +1121,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
 		if err != nil {
 			log.WithError(err).Error("could not get block builder collateral string")
-			builderCollateralStr = ""
+			builderCollateralStr = "0"
 		}
 
 		// Try to parse builder collateral string (U256Str) type.

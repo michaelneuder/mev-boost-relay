@@ -12,7 +12,7 @@ var Migration003Optimistic = &migrate.Migration{
 		ALTER TABLE ` + vars.TableBlockBuilder + ` ADD collateral_value  NUMERIC(48, 0);
 		ALTER TABLE ` + vars.TableBlockBuilder + ` ADD collateral_id     varchar(98);
 	`,
-		// Set all status' to low-prio.
+		// Set all statuses to low-prio.
 		`
 		UPDATE ` + vars.TableBlockBuilder + `
 			SET status = 0;

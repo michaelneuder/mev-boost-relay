@@ -544,7 +544,7 @@ func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.Builde
 		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
 			(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
 			(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
-			ON CONFLICT (block_hash) DO NOTHING`
+			ON CONFLICT (block_hash, builder_pubkey) DO NOTHING`
 	}
 	_, err = s.DB.NamedExec(query, builderDemotionEntry)
 	return err
