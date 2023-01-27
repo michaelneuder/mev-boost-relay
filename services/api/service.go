@@ -458,7 +458,7 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			opts.log.WithError(err).Error("could not get block builder status (defaulting to low-prio)")
 		}
 
-		// Skip simulation if the status is no longer OptimisticActive.
+		// Skip simulation if the status is OptimisticDemoted.
 		if builderStatus == common.OptimisticDemoted {
 			continue
 		}
