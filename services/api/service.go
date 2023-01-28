@@ -458,10 +458,6 @@ func (api *RelayAPI) startOptimisticBlockProcessor() {
 			opts.log.WithError(err).Error("could not get block builder status (defaulting to low-prio)")
 		}
 
-		// Skip simulation if the status is OptimisticDemoted.
-		if builderStatus == common.OptimisticDemoted {
-			continue
-		}
 		err = api.simulateBlock(opts)
 		if err != nil {
 			api.log.WithError(err).Error("block simulation failed")
@@ -957,7 +953,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				log = log.WithFields(logrus.Fields{
 					"bidTrace": bidTrace,
 				})
-				log.WithError(simErr).Error("failed to simulate signed block")
+				log.WithError(simErr).Error("simulation error")
 				builderPubkey := bidTrace.BuilderPubkey.String()
 				// Validation failed, demote all builders with the collateral id.
 				api.setStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
