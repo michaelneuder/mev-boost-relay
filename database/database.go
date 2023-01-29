@@ -41,9 +41,15 @@ type IDatabaseService interface {
 
 	GetBlockBuilders() ([]*BlockBuilderEntry, error)
 	GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error)
-	SetBlockBuilderStatus(pubkey string, isHighPrio, isBlacklisted bool) error
+	GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error)
+	SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error
+	GetBlockBuilderCollateral(pubkey string) (string, string, error)
+	SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
+	GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error)
+
+	UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error
 }
 
 type DatabaseService struct {
@@ -436,8 +442,8 @@ func (s *DatabaseService) UpsertBlockBuilderEntryAfterSubmission(lastSubmission 
 
 	// Upsert
 	query := `INSERT INTO ` + vars.TableBlockBuilder + `
-		(builder_pubkey, description, is_high_prio, is_blacklisted, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror) VALUES
-		(:builder_pubkey, :description, :is_high_prio, :is_blacklisted, :last_submission_id, :last_submission_slot, :num_submissions_total, :num_submissions_simerror)
+		(builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror) VALUES
+		(:builder_pubkey, :description, :status, :collateral_value, :collateral_id, :last_submission_id, :last_submission_slot, :num_submissions_total, :num_submissions_simerror)
 		ON CONFLICT (builder_pubkey) DO UPDATE SET
 			last_submission_id = :last_submission_id,
 			last_submission_slot = :last_submission_slot,
@@ -448,22 +454,42 @@ func (s *DatabaseService) UpsertBlockBuilderEntryAfterSubmission(lastSubmission 
 }
 
 func (s *DatabaseService) GetBlockBuilders() ([]*BlockBuilderEntry, error) {
-	query := `SELECT id, inserted_at, builder_pubkey, description, is_high_prio, is_blacklisted, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` ORDER BY id ASC;`
+	query := `SELECT id, inserted_at, builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` ORDER BY id ASC;`
 	entries := []*BlockBuilderEntry{}
 	err := s.DB.Select(&entries, query)
 	return entries, err
 }
 
 func (s *DatabaseService) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error) {
-	query := `SELECT id, inserted_at, builder_pubkey, description, is_high_prio, is_blacklisted, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
+	query := `SELECT id, inserted_at, builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
 	entry := &BlockBuilderEntry{}
 	err := s.DB.Get(entry, query, pubkey)
 	return entry, err
 }
 
-func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, isHighPrio, isBlacklisted bool) error {
-	query := `UPDATE ` + vars.TableBlockBuilder + ` SET is_high_prio=$1, is_blacklisted=$2 WHERE builder_pubkey=$3;`
-	_, err := s.DB.Exec(query, isHighPrio, isBlacklisted, pubkey)
+func (s *DatabaseService) GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error) {
+	query := `SELECT status FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
+	entry := &BlockBuilderEntry{}
+	err := s.DB.Get(entry, query, pubkey)
+	return common.BuilderStatus(entry.Status), err
+}
+
+func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
+	query := `UPDATE ` + vars.TableBlockBuilder + ` SET status=$1 WHERE builder_pubkey=$2;`
+	_, err := s.DB.Exec(query, builderStatus, pubkey)
+	return err
+}
+
+func (s *DatabaseService) GetBlockBuilderCollateral(pubkey string) (string, string, error) {
+	query := `SELECT collateral_id, collateral_value FROM ` + vars.TableBlockBuilder + `WHERE builder_pubkey=$1;`
+	entry := &BlockBuilderEntry{}
+	err := s.DB.Select(entry, query)
+	return entry.CollateralID, entry.CollateralValue, err
+}
+
+func (s *DatabaseService) SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error {
+	query := `UPDATE ` + vars.TableBlockBuilder + ` SET collateral_id=$1 collateral_value=$2 WHERE builder_pubkey=$3;`
+	_, err := s.DB.Exec(query, collateralID, collateralValue, pubkey)
 	return err
 }
 
@@ -484,5 +510,76 @@ func (s *DatabaseService) GetExecutionPayloads(idFirst, idLast uint64) (entries 
 func (s *DatabaseService) DeleteExecutionPayloads(idFirst, idLast uint64) error {
 	query := `DELETE FROM ` + vars.TableExecutionPayload + ` WHERE id >= $1 AND id <= $2`
 	_, err := s.DB.Exec(query, idFirst, idLast)
+	return err
+}
+
+func (s *DatabaseService) GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error) {
+	query := `SELECT builder_pubkey FROM ` + vars.TableBlockBuilder + ` WHERE collateral_id=$1;`
+	entries := []*BlockBuilderEntry{}
+	err := s.DB.Select(&entries, query, collateralID)
+	out := []string{}
+	for _, v := range entries {
+		out = append(out, v.BuilderPubkey)
+	}
+	return out, err
+}
+
+func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	if submitBlockRequest == nil {
+		return fmt.Errorf("nil submitBlockRequest invalid for UpsertBuilderDemotion")
+	}
+
+	_submitBlockRequest, err := json.Marshal(submitBlockRequest)
+	if err != nil {
+		return err
+	}
+	bidTrace := submitBlockRequest.Message
+	builderDemotionEntry := BuilderDemotionEntry{
+		SubmitBlockRequest: NewNullString(string(_submitBlockRequest)),
+
+		Slot:  bidTrace.Slot,
+		Epoch: bidTrace.Slot / uint64(common.SlotsPerEpoch),
+
+		BuilderPubkey:  bidTrace.BuilderPubkey.String(),
+		ProposerPubkey: bidTrace.ProposerPubkey.String(),
+
+		Value: bidTrace.Value.String(),
+
+		BlockHash: bidTrace.BlockHash.String(),
+	}
+
+	if signedBeaconBlock != nil {
+		_signedBeaconBlock, err := json.Marshal(signedBeaconBlock)
+		if err != nil {
+			return err
+		}
+		_signedValidatorRegistration, err := json.Marshal(signedValidatorRegistration)
+		if err != nil {
+			return err
+		}
+		builderDemotionEntry.SignedBeaconBlock = NewNullString(string(_signedBeaconBlock))
+		builderDemotionEntry.SignedValidatorRegistration = NewNullString(string(_signedValidatorRegistration))
+	}
+
+	var query string
+	// If block_hash + builder_pubkey conflicts and we have a published block, fill in fields needed for the refund.
+	if signedBeaconBlock != nil {
+		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
+			(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			ON CONFLICT (block_hash, builder_pubkey) DO UPDATE SET
+				signed_beacon_block = :signed_beacon_block,
+				signed_validator_registration = :signed_validator_registration,
+				fee_recipient = :fee_recipient,
+				gas_limit = :gas_limit;
+			`
+	} else {
+		// If the block_hash + builder_pubkey conflicts, then all the relevant data must be there already, so do nothing.
+		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
+			(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
+			(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
+			ON CONFLICT (block_hash, builder_pubkey) DO NOTHING`
+	}
+	_, err = s.DB.NamedExec(query, builderDemotionEntry)
 	return err
 }

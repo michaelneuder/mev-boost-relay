@@ -3,10 +3,12 @@ package datastore
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/flashbots/go-boost-utils/types"
+	"github.com/flashbots/mev-boost-relay/common"
 	"github.com/flashbots/mev-boost-relay/database"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -141,4 +143,47 @@ func (ds *Datastore) GetGetPayloadResponse(slot uint64, proposerPubkey, blockHas
 		Version: types.VersionString(blockSubEntry.Version),
 		Data:    executionPayload,
 	}, nil
+}
+
+// SetBlockBuilderStatusByCollateralID modifies the status of a set of builders
+// who have matching collateral IDs. This function continues to try change
+// the statuses, even if some fail. The returned slice contains all the errors
+// encountered.
+func (ds *Datastore) SetBlockBuilderStatusByCollateralID(builderPubkey string, status common.BuilderStatus) []error {
+	// Fetch builder collateral_id.
+	builder, err := ds.db.GetBlockBuilderByPubkey(builderPubkey)
+	if err != nil {
+		err = fmt.Errorf("unable to get builder from database: %v", err)
+		ds.log.Error(err.Error())
+		return []error{err}
+	}
+
+	// Fetch all builder pubkeys using the collateral_id.
+	builderPubkeys, err := ds.db.GetBlockBuilderPubkeysByCollateralID(builder.CollateralID)
+	if err != nil {
+		err = fmt.Errorf("unable to get builder pubkeys by collateral id: %v", err)
+		ds.log.Error(err.Error())
+		return []error{err}
+	}
+
+	var errs []error
+	// Demote all the pubkeys in redis first.
+	for _, pubkey := range builderPubkeys {
+		err := ds.redis.SetBlockBuilderStatus(pubkey, status)
+		if err != nil {
+			err = fmt.Errorf("failed to set block builder: %v status in redis: %v", pubkey, err)
+			ds.log.Error(err.Error())
+			errs = append(errs, err)
+		}
+	}
+	// Demote all the pubkeys in the db.
+	for _, pubkey := range builderPubkeys {
+		err := ds.db.SetBlockBuilderStatus(pubkey, status)
+		if err != nil {
+			err = fmt.Errorf("failed to set block builder: %v status in db: %v", pubkey, err)
+			ds.log.Error(err.Error())
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }

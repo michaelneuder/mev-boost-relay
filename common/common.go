@@ -21,3 +21,29 @@ type HTTPServerTimeouts struct {
 	Write      time.Duration // Timeout for writes. None if 0.
 	Idle       time.Duration // Timeout to disconnect idle client connections. None if 0.
 }
+
+// BuilderStatus indicates how block should be processed by the relay.
+type BuilderStatus uint8
+
+const (
+	LowPrio           BuilderStatus = iota // 0
+	HighPrio                               // 1
+	OptimisticActive                       // 2
+	OptimisticDemoted                      // 3
+	Blacklisted                            // 4
+)
+
+func (b BuilderStatus) String() string {
+	switch b {
+	case HighPrio:
+		return "high-prio"
+	case OptimisticActive:
+		return "optimistic-active"
+	case OptimisticDemoted:
+		return "optimistic-demoted"
+	case Blacklisted:
+		return "blacklisted"
+	default:
+		return "low-prio"
+	}
+}
