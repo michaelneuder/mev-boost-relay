@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/flashbots/go-boost-utils/types"
@@ -90,22 +91,45 @@ func (db MockDB) GetBlockBuilders() ([]*BlockBuilderEntry, error) {
 }
 
 func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error) {
-	return nil, nil
+	builder, ok := db.Builders[pubkey]
+	if !ok {
+		return nil, fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
+	}
+	return builder, nil
 }
 
 func (db MockDB) GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error) {
-	return common.LowPrio, nil
+	builder, ok := db.Builders[pubkey]
+	if !ok {
+		return common.LowPrio, fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
+	}
+	return common.BuilderStatus(builder.Status), nil
 }
 
 func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
+	builder, ok := db.Builders[pubkey]
+	if !ok {
+		return fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
+	}
+	builder.Status = uint8(builderStatus)
 	return nil
 }
 
 func (db MockDB) GetBlockBuilderCollateral(pubkey string) (string, string, error) {
-	return "", "", nil
+	builder, ok := db.Builders[pubkey]
+	if !ok {
+		return "", "", fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
+	}
+	return builder.CollateralID, builder.CollateralValue, nil
 }
 
 func (db MockDB) SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error {
+	builder, ok := db.Builders[pubkey]
+	if !ok {
+		return fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
+	}
+	builder.CollateralID = collateralID
+	builder.CollateralValue = collateralValue
 	return nil
 }
 
@@ -118,9 +142,22 @@ func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
 }
 
 func (db MockDB) GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error) {
-	return nil, nil
+	res := []string{}
+	for _, b := range db.Builders {
+		if b.CollateralID == collateralID {
+			res = append(res, b.BuilderPubkey)
+		}
+	}
+	return res, nil
 }
 
 func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	pubkey := submitBlockRequest.Message.BuilderPubkey.String()
+	db.Demotions[pubkey] = true
+
+	// Refundable case.
+	if signedBeaconBlock != nil {
+		db.Refunds[pubkey] = true
+	}
 	return nil
 }

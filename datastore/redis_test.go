@@ -256,3 +256,57 @@ func TestRedisURIs(t *testing.T) {
 	_, err = NewRedisCache(malformURL, "")
 	require.Error(t, err)
 }
+
+func TestRedisBlockBuilderStatus(t *testing.T) {
+	builderPK := "0xdeadbeef"
+	cache := setupTestRedis(t)
+
+	// Status not set should return error.
+	status, err := cache.GetBlockBuilderStatus(builderPK)
+	require.Error(t, err)
+	// Default should still be LowPrio.
+	require.Equal(t, status, common.LowPrio)
+
+	err = cache.SetBlockBuilderStatus(builderPK, common.OptimisticActive)
+	require.NoError(t, err)
+
+	status, err = cache.GetBlockBuilderStatus(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, status, common.OptimisticActive)
+}
+
+func TestRedisBlockBuilderCollateral(t *testing.T) {
+	builderPK := "0xdeadbeef"
+	cache := setupTestRedis(t)
+
+	// Collateral not set should return error and "0".
+	val, err := cache.GetBlockBuilderCollateral(builderPK)
+	require.Error(t, err)
+	require.Equal(t, val, "0")
+
+	err = cache.SetBlockBuilderCollateral(builderPK, "1559")
+	require.NoError(t, err)
+
+	val, err = cache.GetBlockBuilderCollateral(builderPK)
+	require.NoError(t, err)
+	require.Equal(t, val, "1559")
+}
+
+// func TestBuilderCollateral(t *testing.T) {
+// 	builderPK := "0xdeadbeef"
+// 	cache := setupTestRedis(t)
+
+// 	// Base collateral should be an empty string.
+// 	collateral, err := cache.GetBuilderCollateral(builderPK)
+// 	require.NoError(t, err)
+// 	require.Equal(t, collateral, "")
+
+// 	// Update to be non-empty string.
+// 	err = cache.SetBuilderCollateral(builderPK, "12345")
+// 	require.NoError(t, err)
+
+// 	// Now collateral should be "12345".
+// 	collateral, err = cache.GetBuilderCollateral(builderPK)
+// 	require.NoError(t, err)
+// 	require.Equal(t, collateral, "12345")
+// }
