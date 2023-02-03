@@ -167,16 +167,6 @@ func (ds *Datastore) SetBlockBuilderStatusByCollateralID(builderPubkey string, s
 	}
 
 	var errs []error
-	// Demote all the pubkeys in redis first.
-	for _, pubkey := range builderPubkeys {
-		err := ds.redis.SetBlockBuilderStatus(pubkey, status)
-		if err != nil {
-			err = fmt.Errorf("failed to set block builder: %v status in redis: %v", pubkey, err)
-			ds.log.Error(err.Error())
-			errs = append(errs, err)
-		}
-	}
-	// Demote all the pubkeys in the db.
 	for _, pubkey := range builderPubkeys {
 		err := ds.db.SetBlockBuilderStatus(pubkey, status)
 		if err != nil {

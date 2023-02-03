@@ -69,11 +69,9 @@ type RedisCache struct {
 	keyKnownValidators                string
 	keyValidatorRegistrationTimestamp string
 
-	keyRelayConfig            string
-	keyStats                  string
-	keyProposerDuties         string
-	keyBlockBuilderStatus     string
-	keyBlockBuilderCollateral string
+	keyRelayConfig    string
+	keyStats          string
+	keyProposerDuties string
 }
 
 func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
@@ -98,10 +96,8 @@ func NewRedisCache(redisURI, prefix string) (*RedisCache, error) {
 		keyValidatorRegistrationTimestamp: fmt.Sprintf("%s/%s:validator-registration-timestamp", redisPrefix, prefix),
 		keyRelayConfig:                    fmt.Sprintf("%s/%s:relay-config", redisPrefix, prefix),
 
-		keyStats:                  fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
-		keyProposerDuties:         fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
-		keyBlockBuilderStatus:     fmt.Sprintf("%s/%s:block-builder-status", redisPrefix, prefix),
-		keyBlockBuilderCollateral: fmt.Sprintf("%s/%s:block-builder-collateral", redisPrefix, prefix),
+		keyStats:          fmt.Sprintf("%s/%s:stats", redisPrefix, prefix),
+		keyProposerDuties: fmt.Sprintf("%s/%s:proposer-duties", redisPrefix, prefix),
 	}, nil
 }
 
@@ -315,22 +311,6 @@ func (r *RedisCache) GetBidTrace(slot uint64, proposerPubkey, blockHash string) 
 		return nil, nil
 	}
 	return resp, err
-}
-
-func (r *RedisCache) SetBlockBuilderStatus(builderPubkey string, status common.BuilderStatus) error {
-	return r.client.HSet(context.Background(), r.keyBlockBuilderStatus, builderPubkey, strconv.Itoa(int(status))).Err()
-}
-
-func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (common.BuilderStatus, error) {
-	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderStatus, builderPubkey).Result()
-	if err != nil {
-		return common.LowPrio, err
-	}
-	in, err := strconv.Atoi(res)
-	if err != nil {
-		return common.LowPrio, err
-	}
-	return common.BuilderStatus(in), nil
 }
 
 func (r *RedisCache) GetBuilderLatestPayloadReceivedAt(slot uint64, builderPubkey, parentHash, proposerPubkey string) (int64, error) {

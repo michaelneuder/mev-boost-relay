@@ -40,11 +40,8 @@ type IDatabaseService interface {
 	GetDeliveredPayloads(idFirst, idLast uint64) (entries []*DeliveredPayloadEntry, err error)
 
 	GetBlockBuilders() ([]*BlockBuilderEntry, error)
-	GetRecentBlockBuilders() (*BlockBuilderEntry, error)
 	GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error)
-	GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error)
-	SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error
-	GetBlockBuilderCollateral(pubkey string) (string, string, error)
+	SetBlockBuilderStatus(pubkey string, status common.BuilderStatus) error
 	SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error
 	UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderBlockSubmissionEntry, isError bool) error
 	IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error
@@ -443,8 +440,8 @@ func (s *DatabaseService) UpsertBlockBuilderEntryAfterSubmission(lastSubmission 
 
 	// Upsert
 	query := `INSERT INTO ` + vars.TableBlockBuilder + `
-		(builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror) VALUES
-		(:builder_pubkey, :description, :status, :collateral_value, :collateral_id, :last_submission_id, :last_submission_slot, :num_submissions_total, :num_submissions_simerror)
+		(builder_pubkey, description, is_high_prio, is_blacklisted, is_demoted, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror) VALUES
+		(:builder_pubkey, :description, :is_high_prio, :is_blacklisted, :is_demoted, :collateral_value, :collateral_id, :last_submission_id, :last_submission_slot, :num_submissions_total, :num_submissions_simerror)
 		ON CONFLICT (builder_pubkey) DO UPDATE SET
 			last_submission_id = :last_submission_id,
 			last_submission_slot = :last_submission_slot,
@@ -455,37 +452,23 @@ func (s *DatabaseService) UpsertBlockBuilderEntryAfterSubmission(lastSubmission 
 }
 
 func (s *DatabaseService) GetBlockBuilders() ([]*BlockBuilderEntry, error) {
-	query := `SELECT id, inserted_at, builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` ORDER BY id ASC;`
+	query := `SELECT id, inserted_at, builder_pubkey, description, is_high_prio, is_blacklisted, is_demoted, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` ORDER BY id ASC;`
 	entries := []*BlockBuilderEntry{}
 	err := s.DB.Select(&entries, query)
 	return entries, err
 }
 
 func (s *DatabaseService) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error) {
-	query := `SELECT id, inserted_at, builder_pubkey, description, status, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
+	query := `SELECT id, inserted_at, builder_pubkey, description, is_high_prio, is_blacklisted, is_demoted, collateral_value, collateral_id, last_submission_id, last_submission_slot, num_submissions_total, num_submissions_simerror, num_sent_getpayload FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
 	entry := &BlockBuilderEntry{}
 	err := s.DB.Get(entry, query, pubkey)
 	return entry, err
 }
 
-func (s *DatabaseService) GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error) {
-	query := `SELECT status FROM ` + vars.TableBlockBuilder + ` WHERE builder_pubkey=$1;`
-	entry := &BlockBuilderEntry{}
-	err := s.DB.Get(entry, query, pubkey)
-	return common.BuilderStatus(entry.Status), err
-}
-
-func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
-	query := `UPDATE ` + vars.TableBlockBuilder + ` SET status=$1 WHERE builder_pubkey=$2;`
-	_, err := s.DB.Exec(query, builderStatus, pubkey)
+func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, status common.BuilderStatus) error {
+	query := `UPDATE ` + vars.TableBlockBuilder + ` SET is_high_prio=$1, is_blacklisted=$2, is_demoted=$3 WHERE builder_pubkey=$4;`
+	_, err := s.DB.Exec(query, status.IsHighPrio, status.IsBlacklisted, status.IsDemoted, pubkey)
 	return err
-}
-
-func (s *DatabaseService) GetBlockBuilderCollateral(pubkey string) (string, string, error) {
-	query := `SELECT collateral_id, collateral_value FROM ` + vars.TableBlockBuilder + `WHERE builder_pubkey=$1;`
-	entry := &BlockBuilderEntry{}
-	err := s.DB.Select(entry, query)
-	return entry.CollateralID, entry.CollateralValue, err
 }
 
 func (s *DatabaseService) SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error {

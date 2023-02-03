@@ -98,29 +98,15 @@ func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, err
 	return builder, nil
 }
 
-func (db MockDB) GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error) {
-	builder, ok := db.Builders[pubkey]
-	if !ok {
-		return common.LowPrio, fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
-	}
-	return common.BuilderStatus(builder.Status), nil
-}
-
-func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
+func (db MockDB) SetBlockBuilderStatus(pubkey string, status common.BuilderStatus) error {
 	builder, ok := db.Builders[pubkey]
 	if !ok {
 		return fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
 	}
-	builder.Status = uint8(builderStatus)
+	builder.IsHighPrio = status.IsHighPrio
+	builder.IsBlacklisted = status.IsBlacklisted
+	builder.IsDemoted = status.IsDemoted
 	return nil
-}
-
-func (db MockDB) GetBlockBuilderCollateral(pubkey string) (string, string, error) {
-	builder, ok := db.Builders[pubkey]
-	if !ok {
-		return "", "", fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
-	}
-	return builder.CollateralID, builder.CollateralValue, nil
 }
 
 func (db MockDB) SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error {
