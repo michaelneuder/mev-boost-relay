@@ -112,6 +112,11 @@ type blockSimOptions struct {
 	req      *BuilderBlockValidationRequest
 }
 
+type blockBuilderCacheEntry struct {
+	status     common.BuilderStatus
+	collateral types.U256Str
+}
+
 // RelayAPI represents a single Relay instance
 type RelayAPI struct {
 	opts RelayAPIOpts
@@ -160,6 +165,8 @@ type RelayAPI struct {
 	optimisticBlocksInFlight uint64
 	// Wait group used to monitor status of per-slot optimistic processing.
 	optimisticBlocks sync.WaitGroup
+	// Cache for builder status and collaterals.
+	blockBuildersCache map[string]*blockBuilderCacheEntry
 }
 
 // NewRelayAPI creates a new service. if builders is nil, allow any builder
@@ -419,6 +426,22 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	return nil
 }
 
+func (api *RelayAPI) demoteBuilder(pubkey string, req *types.BuilderSubmitBlockRequest, block *types.SignedBeaconBlock, reg *types.SignedValidatorRegistration) {
+	errs := api.datastore.SetBlockBuilderStatusByCollateralID(pubkey, common.OptimisticDemoted)
+	if len(errs) != 0 {
+		api.log.Error(fmt.Errorf("errors setting builder status by collateral id: %v", errs))
+	}
+	// Write to demotions table.
+	err := api.db.UpsertBuilderDemotion(req, block, reg)
+	if err != nil {
+		api.log.WithError(err).WithFields(logrus.Fields{
+			"signedBeaconBlock":           block,
+			"signedValidatorRegistration": reg,
+			"errorWritingRefundToDB":      true,
+		}).Error("failed to save validator refund to database")
+	}
+}
+
 // processOptimisticBlock is called on a new goroutine when a optimistic block
 // needs to be simulated.
 func (api *RelayAPI) processOptimisticBlock(opts blockSimOptions) {
@@ -438,19 +461,10 @@ func (api *RelayAPI) processOptimisticBlock(opts blockSimOptions) {
 
 	if err := api.simulateBlock(opts); err != nil {
 		api.log.WithError(err).Error("block simulation failed")
-		// Validation failed, demote all builders with the collateral id.
-		errs := api.datastore.SetBlockBuilderStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
-		if len(errs) != 0 {
-			api.log.Error(fmt.Errorf("errors setting builder status by collateral id: %v", errs))
-		}
 
-		// Upsert into the builder demotion table but without the signed block
-		// or the signed registration, because we don't know if this bid will be
-		// accepted.
-		err = api.db.UpsertBuilderDemotion(&opts.req.BuilderSubmitBlockRequest, nil, nil)
-		if err != nil {
-			api.log.WithError(err).Error("could not upsert builder demotion")
-		}
+		// Demote the builder but without the beacon block or the signed
+		// registration, because we don't know if this bid will be accepted.
+		api.demoteBuilder(builderPubkey, &opts.req.BuilderSubmitBlockRequest, nil, nil)
 	}
 }
 
@@ -533,6 +547,26 @@ func (api *RelayAPI) updateOptimisticSlot(headSlot uint64) {
 	// safely update the slot.
 	api.optimisticBlocks.Wait()
 	api.optimisticSlot = headSlot
+
+	builders, err := api.db.GetBlockBuilders()
+	if err != nil {
+		api.log.WithError(err).Error("unable to read block builders from db, builder cache empty")
+	}
+	for _, v := range builders {
+		collStr := v.CollateralValue
+
+		// Try to parse builder collateral string (U256Str) type.
+		var builderCollateral types.U256Str
+		err = builderCollateral.UnmarshalText([]byte(collStr))
+		if err != nil {
+			api.log.WithError(err).Error("could not parse builder collateral string")
+			builderCollateral = ZeroU256
+		}
+		api.blockBuildersCache[v.BuilderPubkey] = &blockBuilderCacheEntry{
+			status:     common.BuilderStatus(v.Status),
+			collateral: builderCollateral,
+		}
+	}
 }
 
 func (api *RelayAPI) startKnownValidatorUpdates() {
@@ -941,17 +975,14 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 				},
 			})
 			if simErr != nil {
+				builderPubkey := bidTrace.BuilderPubkey.String()
+
+				// Prepare demotion data.
 				signedBeaconBlock := SignedBlindedBeaconBlockToBeaconBlock(payload, getPayloadResp.Data)
 				log = log.WithFields(logrus.Fields{
 					"bidTrace": bidTrace,
 				})
 				log.WithError(simErr).Error("simulation error")
-				builderPubkey := bidTrace.BuilderPubkey.String()
-				// Validation failed, demote all builders with the collateral id.
-				errs := api.datastore.SetBlockBuilderStatusByCollateralID(builderPubkey, common.OptimisticDemoted)
-				if len(errs) != 0 {
-					api.log.Error(fmt.Errorf("errors setting builder status by collateral id: %v", errs))
-				}
 
 				// Get registration entry from the DB.
 				registrationEntry, err := api.db.GetValidatorRegistration(builderPubkey)
@@ -970,15 +1001,7 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 					}
 				}
 
-				// Write to demotions table.
-				err = api.db.UpsertBuilderDemotion(&submitBlockReq, signedBeaconBlock, signedRegistration)
-				if err != nil {
-					log.WithError(err).WithFields(logrus.Fields{
-						"signedBeaconBlock":           signedBeaconBlock,
-						"signedValidatorRegistration": signedRegistration,
-						"errorWritingRefundToDB":      true,
-					}).Error("failed to save validator refund to database")
-				}
+				api.demoteBuilder(builderPubkey, &submitBlockReq, signedBeaconBlock, signedRegistration)
 				return
 			}
 		}
@@ -1097,33 +1120,24 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		}
 	}
 
-	builderStatus, err := api.redis.GetBlockBuilderStatus(payload.Message.BuilderPubkey.String())
+	builderPubkey := payload.Message.BuilderPubkey.String()
+	builderEntry := api.blockBuildersCache[builderPubkey]
+	if builderEntry == nil {
+		log.Warnf("unable to read builder: %x from the builder cache, using low-prio and no collateral", builderPubkey)
+		builderEntry = &blockBuilderCacheEntry{
+			status:     common.LowPrio,
+			collateral: ZeroU256,
+		}
+	}
+	builderStatus := builderEntry.status
 	log = log.WithFields(logrus.Fields{
 		"builderStatus": builderStatus.String(),
 	})
-	if err != nil {
-		log.WithError(err).Error("could not get block builder status, defaulting to low prio")
-		builderStatus = common.LowPrio
-	}
 
 	// Check for collateral in optimistic case.
 	if builderStatus == common.OptimisticActive {
-		builderCollateralStr, err := api.redis.GetBlockBuilderCollateral(payload.Message.BuilderPubkey.String())
-		if err != nil {
-			log.WithError(err).Error("could not get block builder collateral string")
-			builderCollateralStr = "0"
-		}
-
-		// Try to parse builder collateral string (U256Str) type.
-		var builderCollateral types.U256Str
-		err = builderCollateral.UnmarshalText([]byte(builderCollateralStr))
-		if err != nil {
-			log.WithError(err).Error("could not parse builder collateral string")
-			builderCollateral = ZeroU256
-		}
-
 		// Check if builder collateral exceeds the value of the block. If not, set as just high prio instead of optimistic.
-		if builderCollateral.Cmp(&payload.Message.Value) < 0 {
+		if api.blockBuildersCache[builderPubkey].collateral.Cmp(&payload.Message.Value) < 0 {
 			builderStatus = common.HighPrio
 		}
 	}
@@ -1262,10 +1276,11 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		if simErr != nil {
 			api.RespondError(w, http.StatusBadRequest, simErr.Error())
 		}
+		return
 	}
 
 	// Ensure this request is still the latest one
-	latestPayloadReceivedAt, err := api.redis.GetBuilderLatestPayloadReceivedAt(payload.Message.Slot, payload.Message.BuilderPubkey.String(), payload.Message.ParentHash.String(), payload.Message.ProposerPubkey.String())
+	latestPayloadReceivedAt, err := api.redis.GetBuilderLatestPayloadReceivedAt(payload.Message.Slot, builderPubkey, payload.Message.ParentHash.String(), payload.Message.ProposerPubkey.String())
 	if err != nil {
 		log.WithError(err).Error("failed getting latest payload receivedAt from redis")
 	} else if receivedAt.UnixMilli() < latestPayloadReceivedAt {
@@ -1318,7 +1333,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	}
 
 	// save this builder's latest bid
-	err = api.redis.SaveLatestBuilderBid(payload.Message.Slot, payload.Message.BuilderPubkey.String(), payload.Message.ParentHash.String(), payload.Message.ProposerPubkey.String(), receivedAt, &getHeaderResponse)
+	err = api.redis.SaveLatestBuilderBid(payload.Message.Slot, builderPubkey, payload.Message.ParentHash.String(), payload.Message.ProposerPubkey.String(), receivedAt, &getHeaderResponse)
 	if err != nil {
 		log.WithError(err).Error("could not save latest builder bid")
 		api.RespondError(w, http.StatusInternalServerError, err.Error())
@@ -1423,14 +1438,7 @@ func (api *RelayAPI) handleInternalBuilderCollateral(w http.ResponseWriter, req 
 		args := req.URL.Query()
 		collateralID := args.Get("collateral_id")
 		value := args.Get("value")
-		err := api.redis.SetBlockBuilderCollateral(builderPubkey, value)
-		if err != nil {
-			err := fmt.Errorf("unable to set collateral in redis for pubkey: %v", builderPubkey)
-			api.log.Error(err.Error())
-			api.RespondError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		err = api.db.SetBlockBuilderCollateral(builderPubkey, collateralID, value)
+		err := api.db.SetBlockBuilderCollateral(builderPubkey, collateralID, value)
 		if err != nil {
 			err := fmt.Errorf("unable to set collateral in db for pubkey: %v", builderPubkey)
 			api.log.Error(err.Error())

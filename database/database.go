@@ -40,6 +40,7 @@ type IDatabaseService interface {
 	GetDeliveredPayloads(idFirst, idLast uint64) (entries []*DeliveredPayloadEntry, err error)
 
 	GetBlockBuilders() ([]*BlockBuilderEntry, error)
+	GetRecentBlockBuilders() (*BlockBuilderEntry, error)
 	GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error)
 	GetBlockBuilderStatus(pubkey string) (common.BuilderStatus, error)
 	SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error
@@ -561,24 +562,23 @@ func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.Builde
 		builderDemotionEntry.SignedValidatorRegistration = NewNullString(string(_signedValidatorRegistration))
 	}
 
+	queryPrefix := `INSERT INTO ` + vars.TableBuilderDemotions + `
+		(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, block_hash) VALUES
+		(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :block_hash)
+		ON CONFLICT (block_hash, builder_pubkey) DO 
+		`
 	var query string
 	// If block_hash + builder_pubkey conflicts and we have a published block, fill in fields needed for the refund.
 	if signedBeaconBlock != nil {
-		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
-			(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
-			(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
-			ON CONFLICT (block_hash, builder_pubkey) DO UPDATE SET
-				signed_beacon_block = :signed_beacon_block,
-				signed_validator_registration = :signed_validator_registration,
-				fee_recipient = :fee_recipient,
-				gas_limit = :gas_limit;
-			`
+		query = queryPrefix + `
+		UPDATE SET
+			signed_beacon_block = :signed_beacon_block,
+			signed_validator_registration = :signed_validator_registration,
+			fee_recipient = :fee_recipient,
+		`
 	} else {
 		// If the block_hash + builder_pubkey conflicts, then all the relevant data must be there already, so do nothing.
-		query = `INSERT INTO ` + vars.TableBuilderDemotions + `
-			(submit_block_request, signed_beacon_block, signed_validator_registration, slot, epoch, builder_pubkey, proposer_pubkey, value, fee_recipient, gas_limit, block_hash) VALUES
-			(:submit_block_request, :signed_beacon_block, :signed_validator_registration, :slot, :epoch, :builder_pubkey, :proposer_pubkey, :value, :fee_recipient, :gas_limit, :block_hash)
-			ON CONFLICT (block_hash, builder_pubkey) DO NOTHING`
+		query = queryPrefix + "NOTHING"
 	}
 	_, err = s.DB.NamedExec(query, builderDemotionEntry)
 	return err

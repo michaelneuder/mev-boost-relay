@@ -218,7 +218,6 @@ type BuilderDemotionEntry struct {
 	Value string `db:"value"`
 
 	FeeRecipient string `db:"fee_recipient"`
-	GasLimit     uint64 `db:"gas_limit"`
 
 	BlockHash string `db:"block_hash"`
 }

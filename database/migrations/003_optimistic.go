@@ -53,7 +53,6 @@ var Migration003Optimistic = &migrate.Migration{
 			value NUMERIC(48, 0),
 			
 			fee_recipient varchar(42) NOT NULL,
-			gas_limit     bigint NOT NULL,
 			
 			block_hash varchar(66) NOT NULL,
 			

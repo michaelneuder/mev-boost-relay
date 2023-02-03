@@ -333,18 +333,6 @@ func (r *RedisCache) GetBlockBuilderStatus(builderPubkey string) (common.Builder
 	return common.BuilderStatus(in), nil
 }
 
-func (r *RedisCache) SetBlockBuilderCollateral(builderPubkey, value string) error {
-	return r.client.HSet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey, value).Err()
-}
-
-func (r *RedisCache) GetBlockBuilderCollateral(builderPubkey string) (string, error) {
-	res, err := r.client.HGet(context.Background(), r.keyBlockBuilderCollateral, builderPubkey).Result()
-	if errors.Is(err, redis.Nil) {
-		return "0", err
-	}
-	return res, err
-}
-
 func (r *RedisCache) GetBuilderLatestPayloadReceivedAt(slot uint64, builderPubkey, parentHash, proposerPubkey string) (int64, error) {
 	keyLatestBidsTime := r.keyBlockBuilderLatestBidsTime(slot, parentHash, proposerPubkey)
 	timestamp, err := r.client.HGet(context.Background(), keyLatestBidsTime, builderPubkey).Int64()
