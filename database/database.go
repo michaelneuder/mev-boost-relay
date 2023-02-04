@@ -433,6 +433,7 @@ func (s *DatabaseService) UpsertBlockBuilderEntryAfterSubmission(lastSubmission 
 		LastSubmissionSlot:     lastSubmission.Slot,
 		NumSubmissionsTotal:    1,
 		NumSubmissionsSimError: 0,
+		CollateralValue:        "0", // required to satisfy numeric type, will not override collateral
 	}
 	if isError {
 		entry.NumSubmissionsSimError = 1
@@ -472,7 +473,7 @@ func (s *DatabaseService) SetBlockBuilderStatus(pubkey string, status common.Bui
 }
 
 func (s *DatabaseService) SetBlockBuilderCollateral(pubkey, collateralID, collateralValue string) error {
-	query := `UPDATE ` + vars.TableBlockBuilder + ` SET collateral_id=$1 collateral_value=$2 WHERE builder_pubkey=$3;`
+	query := `UPDATE ` + vars.TableBlockBuilder + ` SET collateral_id=$1, collateral_value=$2 WHERE builder_pubkey=$3;`
 	_, err := s.DB.Exec(query, collateralID, collateralValue, pubkey)
 	return err
 }
@@ -557,7 +558,7 @@ func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.Builde
 		UPDATE SET
 			signed_beacon_block = :signed_beacon_block,
 			signed_validator_registration = :signed_validator_registration,
-			fee_recipient = :fee_recipient,
+			fee_recipient = :fee_recipient
 		`
 	} else {
 		// If the block_hash + builder_pubkey conflicts, then all the relevant data must be there already, so do nothing.
