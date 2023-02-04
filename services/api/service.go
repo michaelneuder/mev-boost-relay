@@ -430,11 +430,7 @@ func (api *RelayAPI) demoteBuilder(pubkey string, req *types.BuilderSubmitBlockR
 	builderEntry, ok := api.blockBuildersCache[pubkey]
 	if !ok {
 		api.log.Warnf("unable to read builder: %x from the builder cache, using low-prio", pubkey)
-		builderEntry = &blockBuilderCacheEntry{
-			status: common.BuilderStatus{
-				IsHighPrio: false,
-			},
-		}
+		builderEntry = &blockBuilderCacheEntry{}
 	}
 	errs := api.datastore.SetBlockBuilderStatusByCollateralID(pubkey, common.BuilderStatus{
 		IsHighPrio:    builderEntry.status.IsHighPrio,

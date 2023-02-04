@@ -87,7 +87,11 @@ func (db MockDB) UpsertBlockBuilderEntryAfterSubmission(lastSubmission *BuilderB
 }
 
 func (db MockDB) GetBlockBuilders() ([]*BlockBuilderEntry, error) {
-	return nil, nil
+	res := []*BlockBuilderEntry{}
+	for _, v := range db.Builders {
+		res = append(res, v)
+	}
+	return res, nil
 }
 
 func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, error) {

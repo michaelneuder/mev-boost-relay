@@ -59,32 +59,29 @@ func TestSetBlockBuilderStatusByCollateralID(t *testing.T) {
 			"0xaceface": {
 				BuilderPubkey: "0xaceface",
 				CollateralID:  "id1",
-				Status:        uint8(common.OptimisticActive),
+				IsHighPrio:    true,
+				IsDemoted:     false,
 			},
 			"0xbadcafe": {
 				BuilderPubkey: "0xbadcafe",
 				CollateralID:  "id1",
-				Status:        uint8(common.OptimisticActive),
-			},
-			"0xdeadbeef": {
-				BuilderPubkey: "0xdeadbeef",
-				CollateralID:  "id2",
-				Status:        uint8(common.OptimisticActive),
+				IsHighPrio:    true,
+				IsDemoted:     false,
 			},
 		},
 	}
 	ds.db = mockDB
-	errs := ds.SetBlockBuilderStatusByCollateralID("0xaceface", common.OptimisticDemoted)
+	errs := ds.SetBlockBuilderStatusByCollateralID("0xaceface", common.BuilderStatus{
+		IsHighPrio: true,
+		IsDemoted:  true,
+	})
 	require.Empty(t, errs)
 
 	// Check redis & db are updated.
 	for _, pubkey := range []string{"0xaceface", "0xbadcafe"} {
-		status, err := ds.redis.GetBlockBuilderStatus(pubkey)
+		builder, err := ds.db.GetBlockBuilderByPubkey(pubkey)
 		require.NoError(t, err)
-		require.Equal(t, status, common.OptimisticDemoted)
-
-		status, err = ds.db.GetBlockBuilderStatus(pubkey)
-		require.NoError(t, err)
-		require.Equal(t, status, common.OptimisticDemoted)
+		require.True(t, builder.IsDemoted)
+		require.True(t, builder.IsHighPrio)
 	}
 }

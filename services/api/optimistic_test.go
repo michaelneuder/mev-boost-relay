@@ -35,13 +35,6 @@ var (
 	errFake      = fmt.Errorf("foo error")
 )
 
-// type optimisticTestOpts struct {
-// 	pubkey        types.PublicKey
-// 	secretkey     *blst.SecretKey
-// 	simulationErr error
-// 	blockValue    types.U256Str
-// }
-
 func getTestRandomHash(t *testing.T) types.Hash {
 	var random types.Hash
 	err := random.FromSlice([]byte(randao))
@@ -115,14 +108,23 @@ func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBack
 	backend.relay.opts.BlockBuilderAPI = true
 	backend.relay.beaconClient = beaconclient.NewMockMultiBeaconClient()
 	backend.relay.blockSimRateLimiter = &MockBlockSimulationRateLimiter{}
+	backend.relay.blockBuildersCache = map[string]*blockBuilderCacheEntry{
+		pkStr: {
+			status: common.BuilderStatus{
+				IsHighPrio: true,
+			},
+			collateral: types.IntToU256(uint64(collateral)),
+		},
+	}
 
 	// Setup test db, redis, and datastore.
 	mockDB := &database.MockDB{
 		Builders: map[string]*database.BlockBuilderEntry{
 			pkStr: &database.BlockBuilderEntry{
-				BuilderPubkey: pkStr,
-				CollateralID:  collateralID,
-				Status:        uint8(common.OptimisticActive),
+				BuilderPubkey:   pkStr,
+				IsHighPrio:      true,
+				CollateralID:    collateralID,
+				CollateralValue: strconv.Itoa(collateral),
 			},
 		},
 		Demotions: map[string]bool{},
@@ -141,10 +143,6 @@ func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBack
 
 	// Prepare redis.
 	err = backend.relay.redis.SetStats(datastore.RedisStatsFieldSlotLastPayloadDelivered, slot-1)
-	require.NoError(t, err)
-	err = backend.relay.redis.SetBlockBuilderStatus(pkStr, common.OptimisticActive)
-	require.NoError(t, err)
-	err = backend.relay.redis.SetBlockBuilderCollateral(pkStr, strconv.Itoa(collateral))
 	require.NoError(t, err)
 	err = backend.relay.redis.SetKnownValidator(pubkey.PubkeyHex(), proposerInd)
 	require.NoError(t, err)
@@ -174,7 +172,7 @@ func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBack
 	require.Equal(t, count, 1)
 
 	go backend.relay.StartServer()
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	return pubkey, sk, backend
 }
@@ -211,7 +209,7 @@ func runOptimisticGetPayload(t *testing.T, opts blockRequestOpts, simErr error, 
 	require.Equal(t, rr.Code, http.StatusOK)
 
 	// Let updates happen async.
-	time.Sleep(2 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 }
 
 func runOptimisticBlockSubmission(t *testing.T, opts blockRequestOpts, simErr error, backend *testBackend) *httptest.ResponseRecorder {
@@ -245,7 +243,7 @@ func runOptimisticBlockSubmission(t *testing.T, opts blockRequestOpts, simErr er
 	rr := backend.request(http.MethodPost, pathSubmitNewBlock, req)
 
 	// Let updates happen async.
-	time.Sleep(2 * time.Second)
+	time.Sleep(100 * time.Millisecond)
 	return rr
 }
 
@@ -294,11 +292,17 @@ func TestProcessOptimisticBlock(t *testing.T) {
 	}{
 		{
 			description: "success",
-			wantStatus:  common.OptimisticActive,
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  false,
+				IsHighPrio: true,
+			},
 		},
 		{
-			description:     "simulation_error",
-			wantStatus:      common.OptimisticDemoted,
+			description: "simulation_error",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  true,
+				IsHighPrio: true,
+			},
 			simulationError: errFake,
 		},
 	}
@@ -306,8 +310,6 @@ func TestProcessOptimisticBlock(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			pubkey, secretkey, backend := startTestBackend(t)
 			pkStr := pubkey.String()
-			// errs := backend.datastore.SetBlockBuilderStatusByCollateralID(pkStr, common.OptimisticActive)
-			// require.Empty(t, errs)
 			backend.relay.blockSimRateLimiter = &MockBlockSimulationRateLimiter{
 				simulationError: tc.simulationError,
 			}
@@ -325,14 +327,11 @@ func TestProcessOptimisticBlock(t *testing.T) {
 				},
 			})
 
-			// Check status in redis and db.
-			status, err := backend.relay.redis.GetBlockBuilderStatus(pkStr)
+			// Check status in db.
+			builder, err := backend.relay.db.GetBlockBuilderByPubkey(pkStr)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
-
-			status, err = backend.relay.db.GetBlockBuilderStatus(pkStr)
-			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
+			require.Equal(t, tc.wantStatus.IsDemoted, builder.IsDemoted)
+			require.Equal(t, tc.wantStatus.IsHighPrio, builder.IsHighPrio)
 
 			// Check demotion but no refund.
 			if tc.simulationError != nil {
@@ -344,6 +343,73 @@ func TestProcessOptimisticBlock(t *testing.T) {
 	}
 }
 
+func TestDemoteBuilder(t *testing.T) {
+	cases := []struct {
+		description string
+		wantStatus  common.BuilderStatus
+		wantRefund  bool
+		block       *types.SignedBeaconBlock
+		reg         *types.SignedValidatorRegistration
+	}{
+		{
+			description: "no_refund",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  true,
+				IsHighPrio: true,
+			},
+			wantRefund: false,
+		},
+		{
+			description: "refund",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  true,
+				IsHighPrio: true,
+			},
+			wantRefund: true,
+			block:      &types.SignedBeaconBlock{},
+			reg:        &types.SignedValidatorRegistration{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.description, func(t *testing.T) {
+			pubkey, secretkey, backend := startTestBackend(t)
+			pkStr := pubkey.String()
+			req := getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
+				pubkey:     pubkey,
+				secretkey:  secretkey,
+				blockValue: types.IntToU256(uint64(collateral)),
+				domain:     backend.relay.opts.EthNetDetails.DomainBuilder,
+			})
+			backend.relay.demoteBuilder(pkStr, &req, tc.block, tc.reg)
+
+			// Check status in db.
+			builder, err := backend.relay.db.GetBlockBuilderByPubkey(pkStr)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStatus.IsDemoted, builder.IsDemoted)
+			require.Equal(t, tc.wantStatus.IsHighPrio, builder.IsHighPrio)
+
+			// Check demotion and refund statuses.
+			mockDB := backend.relay.db.(*database.MockDB)
+			require.True(t, mockDB.Demotions[pkStr])
+			require.Equal(t, tc.wantRefund, mockDB.Refunds[pkStr])
+		})
+	}
+}
+
+func TestUpdateOptimisticSlot(t *testing.T) {
+	pubkey, _, backend := startTestBackend(t)
+	pkStr := pubkey.String()
+	// Clear cache.
+	backend.relay.blockBuildersCache = map[string]*blockBuilderCacheEntry{}
+	backend.relay.updateOptimisticSlot(slot + 1)
+	entry, ok := backend.relay.blockBuildersCache[pkStr]
+	require.True(t, ok)
+	require.Equal(t, true, entry.status.IsHighPrio)
+	require.Equal(t, false, entry.status.IsDemoted)
+	require.Equal(t, false, entry.status.IsBlacklisted)
+	require.Equal(t, types.IntToU256(uint64(collateral)), entry.collateral)
+}
+
 func TestProposerApiGetPayloadOptimistic(t *testing.T) {
 	testCases := []struct {
 		description     string
@@ -351,13 +417,19 @@ func TestProposerApiGetPayloadOptimistic(t *testing.T) {
 		simulationError error
 	}{
 		{
-			description:     "success",
-			wantStatus:      common.OptimisticActive,
+			description: "success",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  false,
+				IsHighPrio: true,
+			},
 			simulationError: nil,
 		},
 		{
-			description:     "sim_error_refund",
-			wantStatus:      common.OptimisticDemoted,
+			description: "sim_error_refund",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  true,
+				IsHighPrio: true,
+			},
 			simulationError: errFake,
 		},
 	}
@@ -372,15 +444,11 @@ func TestProposerApiGetPayloadOptimistic(t *testing.T) {
 				domain:    backend.relay.opts.EthNetDetails.DomainBeaconProposer,
 			}, tc.simulationError, backend)
 
-			// Check status in redis.
-			status, err := backend.relay.redis.GetBlockBuilderStatus(pkStr)
-			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
-
 			// Check status in db.
-			status, err = backend.relay.db.GetBlockBuilderStatus(pkStr)
+			builder, err := backend.relay.db.GetBlockBuilderByPubkey(pkStr)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
+			require.Equal(t, tc.wantStatus.IsDemoted, builder.IsDemoted)
+			require.Equal(t, tc.wantStatus.IsHighPrio, builder.IsHighPrio)
 
 			// Check demotion and refund.
 			if tc.simulationError != nil {
@@ -402,32 +470,44 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 		blockValue      types.U256Str
 	}{
 		{
-			description:     "success_value_less_than_collateral",
-			wantStatus:      common.OptimisticActive,
+			description: "success_value_less_than_collateral",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  false,
+				IsHighPrio: true,
+			},
 			simulationError: nil,
 			expectDemotion:  false,
 			httpCode:        200, // success
 			blockValue:      types.IntToU256(uint64(collateral) - 1),
 		},
 		{
-			description:     "success_value_greater_than_collateral",
-			wantStatus:      common.OptimisticActive,
+			description: "success_value_greater_than_collateral",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  false,
+				IsHighPrio: true,
+			},
 			simulationError: nil,
 			expectDemotion:  false,
 			httpCode:        200, // success
 			blockValue:      types.IntToU256(uint64(collateral) + 1),
 		},
 		{
-			description:     "failure_value_less_than_collateral",
-			wantStatus:      common.OptimisticDemoted,
+			description: "failure_value_less_than_collateral",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  true,
+				IsHighPrio: true,
+			},
 			simulationError: errFake,
 			expectDemotion:  true,
 			httpCode:        200, // success (in optimistic mode, block sim failure will happen async)
 			blockValue:      types.IntToU256(uint64(collateral) - 1),
 		},
 		{
-			description:     "failure_value_more_than_collateral",
-			wantStatus:      common.OptimisticActive,
+			description: "failure_value_more_than_collateral",
+			wantStatus: common.BuilderStatus{
+				IsDemoted:  false,
+				IsHighPrio: true,
+			},
 			simulationError: errFake,
 			expectDemotion:  false,
 			httpCode:        400, // failure (in pessimistic mode, block sim failure happens in response path)
@@ -450,15 +530,11 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			// Check http code.
 			require.Equal(t, uint64(rr.Code), tc.httpCode)
 
-			// Check status in redis.
-			status, err := backend.relay.redis.GetBlockBuilderStatus(pkStr)
-			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
-
 			// Check status in db.
-			status, err = backend.relay.db.GetBlockBuilderStatus(pkStr)
+			builder, err := backend.relay.db.GetBlockBuilderByPubkey(pkStr)
 			require.NoError(t, err)
-			require.Equal(t, tc.wantStatus, status)
+			require.Equal(t, tc.wantStatus.IsDemoted, builder.IsDemoted)
+			require.Equal(t, tc.wantStatus.IsHighPrio, builder.IsHighPrio)
 
 			// Check demotion status is set to expected and refund is false.
 			mockDB := backend.relay.db.(*database.MockDB)
@@ -482,13 +558,14 @@ func TestInternalBuilderStatus(t *testing.T) {
 		resp := &database.BlockBuilderEntry{}
 		err := json.Unmarshal(rr.Body.Bytes(), &resp)
 		require.NoError(t, err)
-		require.Equal(t, expected, common.BuilderStatus(resp.Status))
+		require.Equal(t, expected.IsHighPrio, resp.IsHighPrio)
+		require.Equal(t, expected.IsBlacklisted, resp.IsBlacklisted)
+		require.Equal(t, expected.IsDemoted, resp.IsDemoted)
 	}
-	setAndGetStatus("?optimistic_active=true", common.OptimisticActive)
-	setAndGetStatus("?optimistic_demoted=true", common.OptimisticDemoted)
-	setAndGetStatus("?high_prio=true", common.HighPrio)
-	setAndGetStatus("?blacklisted=true", common.Blacklisted)
-	setAndGetStatus("", common.LowPrio)
+	setAndGetStatus("?high_prio=true", common.BuilderStatus{IsHighPrio: true})
+	setAndGetStatus("?blacklisted=true", common.BuilderStatus{IsBlacklisted: true})
+	setAndGetStatus("?demoted=true", common.BuilderStatus{IsDemoted: true})
+	setAndGetStatus("", common.BuilderStatus{})
 }
 
 func TestInternalBuilderCollateral(t *testing.T) {
@@ -499,7 +576,7 @@ func TestInternalBuilderCollateral(t *testing.T) {
 	rr := backend.request(http.MethodPost, path+"?collateral_id=builder0x69&value=10000", nil)
 	require.Equal(t, rr.Code, http.StatusOK)
 
-	rr = backend.request(http.MethodGet, path, nil)
+	rr = backend.request(http.MethodGet, "/internal/v1/builder/"+pubkey.String(), nil)
 	require.Equal(t, rr.Code, http.StatusOK)
 	resp := &database.BlockBuilderEntry{}
 	err := json.Unmarshal(rr.Body.Bytes(), &resp)
