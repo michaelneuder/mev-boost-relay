@@ -562,7 +562,7 @@ func (s *DatabaseService) UpsertBuilderDemotion(submitBlockRequest *types.Builde
 			fee_recipient = :fee_recipient;
 		`
 	} else {
-		// If the block_hash + builder_pubkey conflicts, then all the relevant data must be there already, so do nothing.
+		// If the block_hash + builder_pubkey conflicts, but no signedBeaconBlock, then do nothing.
 		query = queryPrefix + "DO NOTHING;"
 	}
 	_, err = s.DB.NamedExec(query, builderDemotionEntry)

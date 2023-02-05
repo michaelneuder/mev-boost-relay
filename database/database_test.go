@@ -1,6 +1,7 @@
 package database
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -23,8 +24,7 @@ const (
 )
 
 var (
-	// runDBTests = os.Getenv("RUN_DB_TESTS") == "1" //|| true
-	runDBTests   = true
+	runDBTests   = os.Getenv("RUN_DB_TESTS") == "1" //|| true
 	feeRecipient = types.Address{0x02}
 	testDBDSN    = common.GetEnv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 )
