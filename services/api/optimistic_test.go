@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	slot         = uint64(42)
+	slot         = uint64(41)
 	collateral   = 1000
 	collateralID = "builder0x69"
 	randao       = "01234567890123456789012345678901"
@@ -35,13 +35,6 @@ var (
 	errFake      = fmt.Errorf("foo error")
 )
 
-func getTestRandomHash(t *testing.T) types.Hash {
-	var random types.Hash
-	err := random.FromSlice([]byte(randao))
-	require.NoError(t, err)
-	return random
-}
-
 func getTestBlockHash(t *testing.T) types.Hash {
 	var blockHash types.Hash
 	err := blockHash.FromSlice([]byte("98765432109876543210987654321098"))
@@ -49,37 +42,23 @@ func getTestBlockHash(t *testing.T) types.Hash {
 	return blockHash
 }
 
+func getTestBidTrace(pubkey types.PublicKey, value uint64) *types.BidTrace {
+	return &types.BidTrace{
+		Slot:                 slot,
+		BuilderPubkey:        pubkey,
+		ProposerFeeRecipient: feeRecipient,
+		Value:                types.IntToU256(value),
+	}
+}
+
 type blockRequestOpts struct {
 	pubkey     types.PublicKey
 	secretkey  *blst.SecretKey
-	blockValue types.U256Str
+	blockValue uint64
 	domain     types.Domain
 }
 
-func getTestBuilderSubmitBlockRequest(t *testing.T, opts blockRequestOpts) types.BuilderSubmitBlockRequest {
-	var txn hexutil.Bytes
-	err := txn.UnmarshalText([]byte("0x03"))
-	require.NoError(t, err)
-	bidTrace := &types.BidTrace{
-		Slot:                 slot,
-		BuilderPubkey:        opts.pubkey,
-		ProposerFeeRecipient: feeRecipient,
-		Value:                opts.blockValue,
-	}
-	signature, err := types.SignMessage(bidTrace, opts.domain, opts.secretkey)
-	require.NoError(t, err)
-	return types.BuilderSubmitBlockRequest{
-		Message:   bidTrace,
-		Signature: signature,
-		ExecutionPayload: &types.ExecutionPayload{
-			Timestamp:    slot * 12, // 12 seconds per slot.
-			Transactions: []hexutil.Bytes{txn},
-			Random:       getTestRandomHash(t),
-		},
-	}
-}
-
-func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBackend) {
+func startTestBackend(t *testing.T) (*types.PublicKey, *blst.SecretKey, *testBackend) {
 	// Setup test key pair.
 	sk, _, err := bls.GenerateNewKeypair()
 	require.NoError(t, err)
@@ -91,9 +70,12 @@ func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBack
 
 	// Setup test backend.
 	backend := newTestBackend(t, 1)
+	var randaoHash types.Hash
+	err = randaoHash.FromSlice([]byte(randao))
+	require.NoError(t, err)
 	backend.relay.expectedPrevRandao = randaoHelper{
 		slot:       slot,
-		prevRandao: getTestRandomHash(t).String(),
+		prevRandao: randaoHash.String(),
 	}
 	backend.relay.genesisInfo = &beaconclient.GetGenesisResponse{}
 	backend.relay.genesisInfo.Data.GenesisTime = 0
@@ -174,7 +156,7 @@ func startTestBackend(t *testing.T) (types.PublicKey, *blst.SecretKey, *testBack
 	go backend.relay.StartServer()
 	time.Sleep(100 * time.Millisecond)
 
-	return pubkey, sk, backend
+	return &pubkey, sk, backend
 }
 
 func runOptimisticGetPayload(t *testing.T, opts blockRequestOpts, simErr error, backend *testBackend) {
@@ -213,33 +195,11 @@ func runOptimisticGetPayload(t *testing.T, opts blockRequestOpts, simErr error, 
 }
 
 func runOptimisticBlockSubmission(t *testing.T, opts blockRequestOpts, simErr error, backend *testBackend) *httptest.ResponseRecorder {
-	var txn hexutil.Bytes
-	err := txn.UnmarshalText([]byte("0x03"))
-	require.NoError(t, err)
-
 	backend.relay.blockSimRateLimiter = &MockBlockSimulationRateLimiter{
 		simulationError: simErr,
 	}
 
-	// Set up request.
-	bidTrace := &types.BidTrace{
-		Slot:                 slot,
-		BuilderPubkey:        opts.pubkey,
-		ProposerFeeRecipient: feeRecipient,
-		Value:                opts.blockValue,
-	}
-	signature, err := types.SignMessage(bidTrace, opts.domain, opts.secretkey)
-	require.NoError(t, err)
-	req := &types.BuilderSubmitBlockRequest{
-		Message:   bidTrace,
-		Signature: signature,
-		ExecutionPayload: &types.ExecutionPayload{
-			Timestamp:    slot * 12, // 12 seconds per slot.
-			Transactions: []hexutil.Bytes{txn},
-			Random:       getTestRandomHash(t),
-		},
-	}
-
+	req := common.TestBuilderSubmitBlockRequest(&opts.pubkey, opts.secretkey, getTestBidTrace(opts.pubkey, opts.blockValue))
 	rr := backend.request(http.MethodPost, pathSubmitNewBlock, req)
 
 	// Let updates happen async.
@@ -271,12 +231,8 @@ func TestSimulateBlock(t *testing.T) {
 				isHighPrio: true,
 				log:        backend.relay.log,
 				req: &BuilderBlockValidationRequest{
-					BuilderSubmitBlockRequest: getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
-						pubkey:     pubkey,
-						secretkey:  secretkey,
-						blockValue: types.IntToU256(uint64(collateral)),
-						domain:     backend.relay.opts.EthNetDetails.DomainBuilder,
-					}),
+					BuilderSubmitBlockRequest: common.TestBuilderSubmitBlockRequest(
+						pubkey, secretkey, getTestBidTrace(*pubkey, collateral)),
 				},
 			})
 			require.Equal(t, tc.simulationError, err)
@@ -318,12 +274,8 @@ func TestProcessOptimisticBlock(t *testing.T) {
 				isHighPrio: true,
 				log:        backend.relay.log,
 				req: &BuilderBlockValidationRequest{
-					BuilderSubmitBlockRequest: getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
-						pubkey:     pubkey,
-						secretkey:  secretkey,
-						blockValue: types.IntToU256(uint64(collateral)),
-						domain:     backend.relay.opts.EthNetDetails.DomainBuilder,
-					}),
+					BuilderSubmitBlockRequest: common.TestBuilderSubmitBlockRequest(
+						pubkey, secretkey, getTestBidTrace(*pubkey, collateral)),
 				},
 			})
 
@@ -374,12 +326,7 @@ func TestDemoteBuilder(t *testing.T) {
 		t.Run(tc.description, func(t *testing.T) {
 			pubkey, secretkey, backend := startTestBackend(t)
 			pkStr := pubkey.String()
-			req := getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
-				pubkey:     pubkey,
-				secretkey:  secretkey,
-				blockValue: types.IntToU256(uint64(collateral)),
-				domain:     backend.relay.opts.EthNetDetails.DomainBuilder,
-			})
+			req := common.TestBuilderSubmitBlockRequest(pubkey, secretkey, getTestBidTrace(*pubkey, collateral))
 			backend.relay.demoteBuilder(pkStr, &req, tc.block, tc.reg)
 
 			// Check status in db.
@@ -440,7 +387,7 @@ func TestProposerApiGetPayloadOptimistic(t *testing.T) {
 			pkStr := pubkey.String()
 			runOptimisticGetPayload(t, blockRequestOpts{
 				secretkey: secretkey,
-				pubkey:    pubkey,
+				pubkey:    *pubkey,
 				domain:    backend.relay.opts.EthNetDetails.DomainBeaconProposer,
 			}, tc.simulationError, backend)
 
@@ -467,7 +414,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 		simulationError error
 		expectDemotion  bool
 		httpCode        uint64
-		blockValue      types.U256Str
+		blockValue      uint64
 	}{
 		{
 			description: "success_value_less_than_collateral",
@@ -478,7 +425,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			simulationError: nil,
 			expectDemotion:  false,
 			httpCode:        200, // success
-			blockValue:      types.IntToU256(uint64(collateral) - 1),
+			blockValue:      collateral - 1,
 		},
 		{
 			description: "success_value_greater_than_collateral",
@@ -489,7 +436,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			simulationError: nil,
 			expectDemotion:  false,
 			httpCode:        200, // success
-			blockValue:      types.IntToU256(uint64(collateral) + 1),
+			blockValue:      collateral + 1,
 		},
 		{
 			description: "failure_value_less_than_collateral",
@@ -500,7 +447,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			simulationError: errFake,
 			expectDemotion:  true,
 			httpCode:        200, // success (in optimistic mode, block sim failure will happen async)
-			blockValue:      types.IntToU256(uint64(collateral) - 1),
+			blockValue:      collateral - 1,
 		},
 		{
 			description: "failure_value_more_than_collateral",
@@ -511,7 +458,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			simulationError: errFake,
 			expectDemotion:  false,
 			httpCode:        400, // failure (in pessimistic mode, block sim failure happens in response path)
-			blockValue:      types.IntToU256(uint64(collateral) + 1),
+			blockValue:      collateral + 1,
 		},
 	}
 
@@ -522,7 +469,7 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 			pkStr := pubkey.String()
 			rr := runOptimisticBlockSubmission(t, blockRequestOpts{
 				secretkey:  secretkey,
-				pubkey:     pubkey,
+				pubkey:     *pubkey,
 				blockValue: tc.blockValue,
 				domain:     backend.relay.opts.EthNetDetails.DomainBuilder,
 			}, tc.simulationError, backend)

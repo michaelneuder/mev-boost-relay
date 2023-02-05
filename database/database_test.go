@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/flashbots/go-boost-utils/bls"
 	"github.com/flashbots/go-boost-utils/types"
 	"github.com/flashbots/mev-boost-relay/common"
@@ -12,6 +11,7 @@ import (
 	"github.com/flashbots/mev-boost-relay/database/vars"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
+	blst "github.com/supranational/blst/bindings/go"
 )
 
 const (
@@ -39,46 +39,24 @@ func createValidatorRegistration(pubKey string) ValidatorRegistrationEntry {
 	}
 }
 
-func getTestRandomHash(t *testing.T) types.Hash {
-	var random types.Hash
-	err := random.FromSlice([]byte("01234567890123456789012345678901"))
-	require.NoError(t, err)
-	return random
-}
-
-func getTestBuilderSubmitBlockRequest(t *testing.T) types.BuilderSubmitBlockRequest {
-	// Setup test key pair.
+func getTestKeyPair(t *testing.T) (*types.PublicKey, *blst.SecretKey) {
 	sk, _, err := bls.GenerateNewKeypair()
 	require.NoError(t, err)
 	blsPubkey := bls.PublicKeyFromSecretKey(sk)
 	var pubkey types.PublicKey
 	err = pubkey.FromSlice(blsPubkey.Compress())
 	require.NoError(t, err)
-
-	var txn hexutil.Bytes
-	err = txn.UnmarshalText([]byte("0x03"))
-	require.NoError(t, err)
-	bidTrace := &types.BidTrace{
-		Slot:                 slot,
-		BuilderPubkey:        pubkey,
-		ProposerFeeRecipient: feeRecipient,
-		Value:                types.IntToU256(uint64(collateral)),
-	}
-	signature, err := types.SignMessage(bidTrace, types.DomainBuilder, sk)
-	require.NoError(t, err)
-	return types.BuilderSubmitBlockRequest{
-		Message:   bidTrace,
-		Signature: signature,
-		ExecutionPayload: &types.ExecutionPayload{
-			Timestamp:    slot * 12, // 12 seconds per slot.
-			Transactions: []hexutil.Bytes{txn},
-			Random:       getTestRandomHash(t),
-		},
-	}
+	return &pubkey, sk
 }
 
 func insertTestBuilder(t *testing.T, db IDatabaseService) string {
-	req := getTestBuilderSubmitBlockRequest(t)
+	pk, sk := getTestKeyPair(t)
+	req := common.TestBuilderSubmitBlockRequest(pk, sk, &types.BidTrace{
+		Slot:                 slot,
+		BuilderPubkey:        *pk,
+		ProposerFeeRecipient: feeRecipient,
+		Value:                types.IntToU256(uint64(collateral)),
+	})
 	entry, err := db.SaveBuilderBlockSubmission(&req, nil, time.Now())
 	require.NoError(t, err)
 	err = db.UpsertBlockBuilderEntryAfterSubmission(entry, false)
@@ -271,8 +249,13 @@ func TestSetBlockBuilderCollateral(t *testing.T) {
 
 func TestUpsertBuilderDemotion(t *testing.T) {
 	db := resetDatabase(t)
-	insertTestBuilder(t, db)
-	req := getTestBuilderSubmitBlockRequest(t)
+	pk, sk := getTestKeyPair(t)
+	req := common.TestBuilderSubmitBlockRequest(pk, sk, &types.BidTrace{
+		Slot:                 slot,
+		BuilderPubkey:        *pk,
+		ProposerFeeRecipient: feeRecipient,
+		Value:                types.IntToU256(uint64(collateral)),
+	})
 
 	// Non-refundable demotion (just the block request).
 	err := db.UpsertBuilderDemotion(&req, nil, nil)
