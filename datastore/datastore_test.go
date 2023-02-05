@@ -51,37 +51,3 @@ func TestProdProposerValidatorRegistration(t *testing.T) {
 	err = copier.Copy(&reg2, &reg1)
 	require.NoError(t, err)
 }
-
-func TestSetBlockBuilderStatusByCollateralID(t *testing.T) {
-	ds := setupTestDatastore(t)
-	mockDB := database.MockDB{
-		Builders: map[string]*database.BlockBuilderEntry{
-			"0xaceface": {
-				BuilderPubkey: "0xaceface",
-				CollateralID:  "id1",
-				IsHighPrio:    true,
-				IsDemoted:     false,
-			},
-			"0xbadcafe": {
-				BuilderPubkey: "0xbadcafe",
-				CollateralID:  "id1",
-				IsHighPrio:    true,
-				IsDemoted:     false,
-			},
-		},
-	}
-	ds.db = mockDB
-	errs := ds.SetBlockBuilderStatusByCollateralID("0xaceface", common.BuilderStatus{
-		IsHighPrio: true,
-		IsDemoted:  true,
-	})
-	require.Empty(t, errs)
-
-	// Check redis & db are updated.
-	for _, pubkey := range []string{"0xaceface", "0xbadcafe"} {
-		builder, err := ds.db.GetBlockBuilderByPubkey(pubkey)
-		require.NoError(t, err)
-		require.True(t, builder.IsDemoted)
-		require.True(t, builder.IsHighPrio)
-	}
-}

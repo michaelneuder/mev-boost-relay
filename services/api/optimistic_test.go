@@ -267,9 +267,9 @@ func TestSimulateBlock(t *testing.T) {
 				simulationError: tc.simulationError,
 			}
 			err := backend.relay.simulateBlock(blockSimOptions{
-				ctx:      context.Background(),
-				highPrio: true,
-				log:      backend.relay.log,
+				ctx:        context.Background(),
+				isHighPrio: true,
+				log:        backend.relay.log,
 				req: &BuilderBlockValidationRequest{
 					BuilderSubmitBlockRequest: getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
 						pubkey:     pubkey,
@@ -314,9 +314,9 @@ func TestProcessOptimisticBlock(t *testing.T) {
 				simulationError: tc.simulationError,
 			}
 			backend.relay.processOptimisticBlock(blockSimOptions{
-				ctx:      context.Background(),
-				highPrio: true,
-				log:      backend.relay.log,
+				ctx:        context.Background(),
+				isHighPrio: true,
+				log:        backend.relay.log,
 				req: &BuilderBlockValidationRequest{
 					BuilderSubmitBlockRequest: getTestBuilderSubmitBlockRequest(t, blockRequestOpts{
 						pubkey:     pubkey,

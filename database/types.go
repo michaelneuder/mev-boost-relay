@@ -190,7 +190,7 @@ type BlockBuilderEntry struct {
 
 	IsHighPrio    bool `db:"is_high_prio"   json:"is_high_prio"`
 	IsBlacklisted bool `db:"is_blacklisted" json:"is_blacklisted"`
-	IsDemoted     bool `db:"is_demoted" json:"is_demoted"`
+	IsDemoted     bool `db:"is_demoted"     json:"is_demoted"`
 
 	CollateralValue string `db:"collateral_value"  json:"collateral_value"`
 	CollateralID    string `db:"collateral_id"     json:"collateral_id"`

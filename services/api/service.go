@@ -106,10 +106,10 @@ type randaoHelper struct {
 
 // Data needed to issue a block validation request.
 type blockSimOptions struct {
-	ctx      context.Context
-	highPrio bool
-	log      *logrus.Entry
-	req      *BuilderBlockValidationRequest
+	ctx        context.Context
+	isHighPrio bool
+	log        *logrus.Entry
+	req        *BuilderBlockValidationRequest
 }
 
 type blockBuilderCacheEntry struct {
@@ -413,7 +413,7 @@ func (api *RelayAPI) startValidatorRegistrationDBProcessor() {
 // simulateBlock sends a request for a block simulation to blockSimRateLimiter.
 func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 	t := time.Now()
-	simErr := api.blockSimRateLimiter.send(opts.ctx, opts.req, opts.highPrio)
+	simErr := api.blockSimRateLimiter.send(opts.ctx, opts.req, opts.isHighPrio)
 	log := opts.log.WithFields(logrus.Fields{
 		"duration":   time.Since(t).Seconds(),
 		"numWaiting": api.blockSimRateLimiter.currentCounter(),
@@ -432,17 +432,16 @@ func (api *RelayAPI) demoteBuilder(pubkey string, req *types.BuilderSubmitBlockR
 		api.log.Warnf("unable to read builder: %x from the builder cache, using low-prio", pubkey)
 		builderEntry = &blockBuilderCacheEntry{}
 	}
-	errs := api.datastore.SetBlockBuilderStatusByCollateralID(pubkey, common.BuilderStatus{
+	err := api.db.SetBlockBuilderStatus(pubkey, common.BuilderStatus{
 		IsHighPrio:    builderEntry.status.IsHighPrio,
 		IsBlacklisted: builderEntry.status.IsBlacklisted,
 		IsDemoted:     true,
 	})
-	if len(errs) != 0 {
-		api.log.Error(fmt.Errorf("errors setting builder: %x status by collateral id: %v", pubkey, errs))
+	if err != nil {
+		api.log.Error(fmt.Errorf("error setting builder: %v status: %v", pubkey, err))
 	}
 	// Write to demotions table.
-	err := api.db.UpsertBuilderDemotion(req, block, reg)
-	if err != nil {
+	if err = api.db.UpsertBuilderDemotion(req, block, reg); err != nil {
 		api.log.WithError(err).WithFields(logrus.Fields{
 			"signedBeaconBlock":           block,
 			"signedValidatorRegistration": reg,
@@ -969,9 +968,9 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 		}
 
 		simErr := api.simulateBlock(blockSimOptions{
-			ctx:      req.Context(),
-			log:      log,
-			highPrio: true, // manually set to true for these blocks.
+			ctx:        req.Context(),
+			log:        log,
+			isHighPrio: true, // manually set to true for these blocks.
 			req: &BuilderBlockValidationRequest{
 				BuilderSubmitBlockRequest: submitBlockReq,
 			},
@@ -1253,9 +1252,9 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 
 	// Construct simulation request.
 	opts := blockSimOptions{
-		ctx:      req.Context(),
-		highPrio: builderEntry.status.IsHighPrio,
-		log:      log,
+		ctx:        req.Context(),
+		isHighPrio: builderEntry.status.IsHighPrio,
+		log:        log,
 		req: &BuilderBlockValidationRequest{
 			BuilderSubmitBlockRequest: *payload,
 			RegisteredGasLimit:        slotDuty.GasLimit,
@@ -1396,9 +1395,9 @@ func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *htt
 			IsBlacklisted: isBlacklisted,
 			IsDemoted:     isDemoted,
 		}
-		errs := api.datastore.SetBlockBuilderStatusByCollateralID(builderPubkey, newStatus)
-		if len(errs) != 0 {
-			err := fmt.Errorf("errors setting builder status by collateral id: %v", errs)
+		err := api.db.SetBlockBuilderStatus(builderPubkey, newStatus)
+		if err != nil {
+			err := fmt.Errorf("error setting builder: %v status: %v", builderPubkey, err)
 			api.log.Error(err)
 			api.RespondError(w, http.StatusInternalServerError, err.Error())
 			return

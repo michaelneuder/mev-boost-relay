@@ -107,9 +107,21 @@ func (db MockDB) SetBlockBuilderStatus(pubkey string, status common.BuilderStatu
 	if !ok {
 		return fmt.Errorf("builder with pubkey %v not in Builders map", pubkey)
 	}
-	builder.IsHighPrio = status.IsHighPrio
-	builder.IsBlacklisted = status.IsBlacklisted
-	builder.IsDemoted = status.IsDemoted
+	// Single builder update.
+	if builder.CollateralID == "" {
+		builder.IsHighPrio = status.IsHighPrio
+		builder.IsBlacklisted = status.IsBlacklisted
+		builder.IsDemoted = status.IsDemoted
+		return nil
+	}
+	// All matching collateral IDs updated.
+	for _, v := range db.Builders {
+		if v.CollateralID == builder.CollateralID {
+			v.IsHighPrio = status.IsHighPrio
+			v.IsBlacklisted = status.IsBlacklisted
+			v.IsDemoted = status.IsDemoted
+		}
+	}
 	return nil
 }
 
@@ -129,16 +141,6 @@ func (db MockDB) IncBlockBuilderStatsAfterGetHeader(slot uint64, blockhash strin
 
 func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error {
 	return nil
-}
-
-func (db MockDB) GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error) {
-	res := []string{}
-	for _, b := range db.Builders {
-		if b.CollateralID == collateralID {
-			res = append(res, b.BuilderPubkey)
-		}
-	}
-	return res, nil
 }
 
 func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {

@@ -1,7 +1,6 @@
 package database
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -24,8 +23,8 @@ const (
 )
 
 var (
-	runDBTests = os.Getenv("RUN_DB_TESTS") == "1" //|| true
-	// runDBTests   = true
+	// runDBTests = os.Getenv("RUN_DB_TESTS") == "1" //|| true
+	runDBTests   = true
 	feeRecipient = types.Address{0x02}
 	testDBDSN    = common.GetEnv("TEST_DB_DSN", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 )
@@ -201,26 +200,52 @@ func TestMigrations(t *testing.T) {
 
 func TestSetBlockBuilderStatus(t *testing.T) {
 	db := resetDatabase(t)
-	pubkey := insertTestBuilder(t, db)
+	// Four test builders, 2 with matching collateral id, 2 with no collateral id.
+	pubkey1 := insertTestBuilder(t, db)
+	pubkey2 := insertTestBuilder(t, db)
+	pubkey3 := insertTestBuilder(t, db)
+	pubkey4 := insertTestBuilder(t, db)
+
+	// Builder 1 & 2 share a collateral id.
+	err := db.SetBlockBuilderCollateral(pubkey1, collateralID, collateralStr)
+	require.NoError(t, err)
+	err = db.SetBlockBuilderCollateral(pubkey2, collateralID, collateralStr)
+	require.NoError(t, err)
 
 	// Before status change.
-	builder, err := db.GetBlockBuilderByPubkey(pubkey)
-	require.NoError(t, err)
-	require.False(t, builder.IsHighPrio)
-	require.False(t, builder.IsDemoted)
-	require.False(t, builder.IsBlacklisted)
+	for _, v := range []string{pubkey1, pubkey2, pubkey3, pubkey4} {
+		builder, err := db.GetBlockBuilderByPubkey(v)
+		require.NoError(t, err)
+		require.False(t, builder.IsHighPrio)
+		require.False(t, builder.IsDemoted)
+		require.False(t, builder.IsBlacklisted)
+	}
 
-	err = db.SetBlockBuilderStatus(pubkey, common.BuilderStatus{
+	// Update status of builder 1 and 3.
+	err = db.SetBlockBuilderStatus(pubkey1, common.BuilderStatus{
+		IsHighPrio: true,
+		IsDemoted:  true,
+	})
+	require.NoError(t, err)
+	err = db.SetBlockBuilderStatus(pubkey3, common.BuilderStatus{
 		IsHighPrio: true,
 		IsDemoted:  true,
 	})
 	require.NoError(t, err)
 
-	// After status change.
-	builder, err = db.GetBlockBuilderByPubkey(pubkey)
+	// After status change, builders 1, 2, 3 should be modified.
+	for _, v := range []string{pubkey1, pubkey2, pubkey3} {
+		builder, err := db.GetBlockBuilderByPubkey(v)
+		require.NoError(t, err)
+		require.True(t, builder.IsHighPrio)
+		require.True(t, builder.IsDemoted)
+		require.False(t, builder.IsBlacklisted)
+	}
+	// Builder 4 should be unchanged.
+	builder, err := db.GetBlockBuilderByPubkey(pubkey4)
 	require.NoError(t, err)
-	require.True(t, builder.IsHighPrio)
-	require.True(t, builder.IsDemoted)
+	require.False(t, builder.IsHighPrio)
+	require.False(t, builder.IsDemoted)
 	require.False(t, builder.IsBlacklisted)
 }
 
@@ -242,24 +267,6 @@ func TestSetBlockBuilderCollateral(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, collateralID, builder.CollateralID)
 	require.Equal(t, collateralStr, builder.CollateralValue)
-}
-
-func TestGetBlockBuilderPubkeysByCollateralID(t *testing.T) {
-	db := resetDatabase(t)
-	// Insert 2 test builders.
-	pubkey1 := insertTestBuilder(t, db)
-	pubkey2 := insertTestBuilder(t, db)
-
-	// Set them both to the same collateral id.
-	err := db.SetBlockBuilderCollateral(pubkey1, collateralID, collateralStr)
-	require.NoError(t, err)
-	err = db.SetBlockBuilderCollateral(pubkey2, collateralID, collateralStr)
-	require.NoError(t, err)
-
-	pubkeys, err := db.GetBlockBuilderPubkeysByCollateralID(collateralID)
-	require.NoError(t, err)
-	require.Contains(t, pubkeys, pubkey1)
-	require.Contains(t, pubkeys, pubkey2)
 }
 
 func TestUpsertBuilderDemotion(t *testing.T) {
