@@ -1,19 +1,13 @@
 package beaconclient
 
 import (
-	"sync"
-
 	"github.com/flashbots/go-boost-utils/types"
 )
 
-type MockMultiBeaconClient struct {
-	mu sync.RWMutex
-}
+type MockMultiBeaconClient struct{}
 
 func NewMockMultiBeaconClient() *MockMultiBeaconClient {
-	return &MockMultiBeaconClient{
-		mu: sync.RWMutex{},
-	}
+	return &MockMultiBeaconClient{}
 }
 
 func (*MockMultiBeaconClient) SubscribeToHeadEvents(slotC chan HeadEventData) {}

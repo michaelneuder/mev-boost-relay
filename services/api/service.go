@@ -429,7 +429,7 @@ func (api *RelayAPI) simulateBlock(opts blockSimOptions) error {
 func (api *RelayAPI) demoteBuilder(pubkey string, req *types.BuilderSubmitBlockRequest, block *types.SignedBeaconBlock, reg *types.SignedValidatorRegistration) {
 	builderEntry, ok := api.blockBuildersCache[pubkey]
 	if !ok {
-		api.log.Warnf("unable to read builder: %x from the builder cache, using low-prio", pubkey)
+		api.log.Warnf("builder %v not in the builder cache", pubkey)
 		builderEntry = &blockBuilderCacheEntry{}
 	}
 	err := api.db.SetBlockBuilderStatus(pubkey, common.BuilderStatus{
@@ -554,11 +554,12 @@ func (api *RelayAPI) updateOptimisticSlot(headSlot uint64) {
 	// Wait until there are no optimistic blocks being processed. Then we can
 	// safely update the slot.
 	api.optimisticBlocks.Wait()
-	api.optimisticSlot = headSlot
+	api.optimisticSlot = headSlot + 1
 
 	builders, err := api.db.GetBlockBuilders()
 	if err != nil {
-		api.log.WithError(err).Error("unable to read block builders from db, builder cache empty")
+		api.log.WithError(err).Error("unable to read block builders from db, not updating builder cache")
+		return
 	}
 	for _, v := range builders {
 		collStr := v.CollateralValue
