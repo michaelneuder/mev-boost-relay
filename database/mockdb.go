@@ -7,7 +7,11 @@ import (
 	"github.com/flashbots/mev-boost-relay/common"
 )
 
-type MockDB struct{}
+type MockDB struct {
+	Builders  map[string]*BlockBuilderEntry
+	Demotions map[string]bool
+	Refunds   map[string]bool
+}
 
 func (db MockDB) NumRegisteredValidators() (count uint64, err error) {
 	return 0, nil
@@ -89,7 +93,7 @@ func (db MockDB) GetBlockBuilderByPubkey(pubkey string) (*BlockBuilderEntry, err
 	return nil, nil
 }
 
-func (db MockDB) SetBlockBuilderStatus(pubkey string, isHighPrio, isBlacklisted bool) error {
+func (db MockDB) SetBlockBuilderStatus(pubkey string, builderStatus common.BuilderStatus) error {
 	return nil
 }
 
@@ -99,4 +103,12 @@ func (db MockDB) IncBlockBuilderStatsAfterGetHeader(slot uint64, blockhash strin
 
 func (db MockDB) IncBlockBuilderStatsAfterGetPayload(builderPubkey string) error {
 	return nil
+}
+
+func (db MockDB) UpsertBuilderDemotion(submitBlockRequest *types.BuilderSubmitBlockRequest, signedBeaconBlock *types.SignedBeaconBlock, signedValidatorRegistration *types.SignedValidatorRegistration) error {
+	return nil
+}
+
+func (db MockDB) GetBlockBuilderPubkeysByCollateralID(collateralID string) ([]string, error) {
+	return nil, nil
 }
