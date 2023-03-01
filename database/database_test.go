@@ -45,7 +45,9 @@ var (
 		RedisUpdate: 51,
 		Submission:  52,
 	}
-	errFoo = fmt.Errorf("fake simulation error")
+	receivedAt = time.Now().UTC()
+	eligibleAt = receivedAt.Add(time.Second)
+	errFoo     = fmt.Errorf("fake simulation error")
 )
 
 func createValidatorRegistration(pubKey string) ValidatorRegistrationEntry {
@@ -81,7 +83,7 @@ func insertTestBuilder(t *testing.T, db IDatabaseService) string {
 		ProposerFeeRecipient: feeRecipient,
 		Value:                types.IntToU256(uint64(collateral)),
 	})
-	entry, err := db.SaveBuilderBlockSubmission(&req, nil, time.Now(), profile, optimisticSubmission)
+	entry, err := db.SaveBuilderBlockSubmission(&req, nil, receivedAt, eligibleAt, profile, optimisticSubmission)
 	require.NoError(t, err)
 	err = db.UpsertBlockBuilderEntryAfterSubmission(entry, false)
 	require.NoError(t, err)
@@ -359,6 +361,9 @@ func TestGetBlockSubmissionEntry(t *testing.T) {
 	require.Equal(t, profile.Simulation, entry.SimulationDuration)
 	require.Equal(t, profile.RedisUpdate, entry.RedisUpdateDuration)
 	require.Equal(t, profile.Submission, entry.SubmissionDuration)
+
+	require.True(t, entry.ReceivedAt.Time.Equal(receivedAt))
+	require.True(t, entry.EligibleAt.Time.Equal(eligibleAt))
 
 	require.True(t, entry.OptimisticSubmission)
 }

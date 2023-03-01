@@ -127,6 +127,7 @@ type BuilderBlockSubmissionEntry struct {
 	ID         int64        `db:"id"`
 	InsertedAt time.Time    `db:"inserted_at"`
 	ReceivedAt sql.NullTime `db:"received_at"`
+	EligibleAt sql.NullTime `db:"eligible_at"`
 
 	// Delivered ExecutionPayload
 	ExecutionPayloadID sql.NullInt64 `db:"execution_payload_id"`
