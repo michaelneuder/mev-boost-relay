@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"github.com/attestantio/go-eth2-client/spec/phase0"
 	"github.com/buger/jsonparser"
 	"github.com/flashbots/go-boost-utils/bls"
+	"github.com/flashbots/go-boost-utils/types"
 	boostTypes "github.com/flashbots/go-boost-utils/types"
 	"github.com/flashbots/go-utils/cli"
 	"github.com/flashbots/go-utils/httplogger"
@@ -1258,8 +1260,74 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		log = log.WithField("gzip-req", true)
 	}
 
+	var buf bytes.Buffer
+	rHeader := io.TeeReader(r, &buf)
+
+	var sig boostTypes.Signature
+	var bid boostTypes.BidTrace
+	var sigFound, bidFound bool
+	dec := json.NewDecoder(rHeader)
+	for !sigFound || !bidFound {
+		t, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.WithError(err).Warn("could not read payload")
+			api.RespondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if t == "signature" {
+			sigT, _ := dec.Token()
+			sigB, err := hex.DecodeString(sigT.(string)[2:])
+			if err != nil {
+				log.WithError(err).Warn("could not decode signature")
+				api.RespondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			err = sig.FromSlice(sigB)
+			if err != nil {
+				log.WithError(err).Warn("could not read signature from slice")
+				api.RespondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			sigFound = true
+		}
+		if t == "message" {
+			err = dec.Decode(&bid)
+			if err != nil {
+				log.WithError(err).Warn("could not decode bid trace")
+				api.RespondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			bidFound = true
+		}
+		if t == "execution_payload" {
+			log.Warn("execution payload preempts signature and/or bid trace")
+		}
+	}
+
+	ok, err := types.VerifySignature(&bid, api.opts.EthNetDetails.DomainBuilder, bid.BuilderPubkey[:], sig[:])
+	if !ok || err != nil {
+		log.WithError(err).Warn("could not verify builder signature")
+		api.RespondError(w, http.StatusBadRequest, "invalid signature")
+		return
+	}
+
+	headerOonly := time.Now().UTC()
+	pf.Header = uint64(headerOnly.Sub(prevTime).Microseconds())
+	log.WithFields(logrus.Fields{
+		"bid":          bid,
+		"signature":    sig,
+		"headerTiming": pf.Header,
+	}).Info("optimistically parsed bid and verified signature")
+
+	// Join the header bytes with the remaining bytes.
+	fullReader := io.MultiReader(&buf, r)
+
+	// Read full request and unmarshal.
 	payload := new(common.BuilderSubmitBlockRequest)
-	if err := json.NewDecoder(r).Decode(payload); err != nil {
+	if err := json.NewDecoder(fullReader).Decode(payload); err != nil {
 		log.WithError(err).Warn("could not decode payload")
 		api.RespondError(w, http.StatusBadRequest, err.Error())
 		return
