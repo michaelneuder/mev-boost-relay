@@ -246,6 +246,10 @@ func TestSimulateBlock(t *testing.T) {
 			description:     "block_already_known",
 			simulationError: fmt.Errorf(ErrBlockAlreadyKnown),
 		},
+		{
+			description:     "missing_trie_node",
+			simulationError: fmt.Errorf(ErrMissingTrieNode + "23e21f94cd97b3b27ae5c758277639dd387a6e3da5923c5485f24ec6c71e16b8 (path ) <nil>"),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.description, func(t *testing.T) {
@@ -256,6 +260,11 @@ func TestSimulateBlock(t *testing.T) {
 			err := backend.relay.simulateBlock(context.Background(), blockSimOptions{
 				isHighPrio: true,
 				log:        backend.relay.log,
+				builder: &blockBuilderCacheEntry{
+					status: common.BuilderStatus{
+						IsOptimistic: true,
+					},
+				},
 				req: &BuilderBlockValidationRequest{
 					BuilderSubmitBlockRequest: common.TestBuilderSubmitBlockRequest(
 						pubkey, secretkey, getTestBidTrace(*pubkey, collateral)),
@@ -297,9 +306,14 @@ func TestProcessOptimisticBlock(t *testing.T) {
 			backend.relay.blockSimRateLimiter = &MockBlockSimulationRateLimiter{
 				simulationError: tc.simulationError,
 			}
-			backend.relay.processOptimisticBlock(context.Background(), blockSimOptions{
+			backend.relay.processOptimisticBlock(blockSimOptions{
 				isHighPrio: true,
 				log:        backend.relay.log,
+				builder: &blockBuilderCacheEntry{
+					status: common.BuilderStatus{
+						IsOptimistic: true,
+					},
+				},
 				req: &BuilderBlockValidationRequest{
 					BuilderSubmitBlockRequest: common.TestBuilderSubmitBlockRequest(
 						pubkey, secretkey, getTestBidTrace(*pubkey, collateral)),
@@ -497,6 +511,9 @@ func TestBuilderApiSubmitNewBlockOptimistic(t *testing.T) {
 
 func TestInternalBuilderStatus(t *testing.T) {
 	pubkey, _, backend := startTestBackend(t)
+	// Set all to false initially.
+	err := backend.relay.db.SetBlockBuilderStatus(pubkey.String(), common.BuilderStatus{})
+	require.NoError(t, err)
 	path := "/internal/v1/builder/" + pubkey.String()
 
 	setAndGetStatus := func(arg string, expected common.BuilderStatus) {
@@ -513,10 +530,10 @@ func TestInternalBuilderStatus(t *testing.T) {
 		require.Equal(t, expected.IsBlacklisted, resp.IsBlacklisted)
 		require.Equal(t, expected.IsOptimistic, resp.IsOptimistic)
 	}
+	// Add each on.
 	setAndGetStatus("?high_prio=true", common.BuilderStatus{IsHighPrio: true})
-	setAndGetStatus("?blacklisted=true", common.BuilderStatus{IsBlacklisted: true})
-	setAndGetStatus("?optimistic=true", common.BuilderStatus{IsOptimistic: true})
-	setAndGetStatus("", common.BuilderStatus{})
+	setAndGetStatus("?blacklisted=true", common.BuilderStatus{IsHighPrio: true, IsBlacklisted: true})
+	setAndGetStatus("?optimistic=true", common.BuilderStatus{IsHighPrio: true, IsBlacklisted: true, IsOptimistic: true})
 }
 
 func TestInternalBuilderCollateral(t *testing.T) {
