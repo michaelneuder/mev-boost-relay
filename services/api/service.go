@@ -38,7 +38,11 @@ import (
 	uberatomic "go.uber.org/atomic"
 )
 
-const ErrBlockAlreadyKnown = "simulation failed: block already known"
+const (
+	ErrBlockAlreadyKnown  = "simulation failed: block already known"
+	ErrBlockRequiresReorg = "simulation failed: block requires a reorg"
+	ErrMissingTrieNode    = "missing trie node"
+)
 
 var (
 	ErrMissingLogOpt              = errors.New("log parameter is nil")
@@ -48,6 +52,7 @@ var (
 	ErrServerAlreadyStarted       = errors.New("server was already started")
 	ErrBuilderAPIWithoutSecretKey = errors.New("cannot start builder API without secret key")
 	ErrMismatchedForkVersions     = errors.New("can not find matching fork versions as retrieved from beacon node")
+	ErrMissingForkVersions        = errors.New("invalid bellatrix/capella fork version from beacon node")
 )
 
 var (
@@ -120,6 +125,7 @@ type withdrawalsHelper struct {
 type blockSimOptions struct {
 	isHighPrio bool
 	log        *logrus.Entry
+	builder    *blockBuilderCacheEntry
 	req        *BuilderBlockValidationRequest
 }
 
@@ -311,13 +317,15 @@ func (api *RelayAPI) getRouter() http.Handler {
 }
 
 func (api *RelayAPI) isCapella(slot uint64) bool {
+	if api.capellaEpoch == 0 { // CL didn't yet have it
+		return false
+	}
 	epoch := slot / uint64(common.SlotsPerEpoch)
 	return epoch >= api.capellaEpoch
 }
 
 func (api *RelayAPI) isBellatrix(slot uint64) bool {
-	epoch := slot / uint64(common.SlotsPerEpoch)
-	return epoch >= api.bellatrixEpoch && epoch < api.capellaEpoch
+	return !api.isCapella(slot)
 }
 
 // StartServer starts the HTTP server for this instance
@@ -346,7 +354,9 @@ func (api *RelayAPI) StartServer() (err error) {
 		return err
 	}
 
+	// Parse forkSchedule
 	for _, fork := range forkSchedule.Data {
+		api.log.Infof("forkSchedule: version=%s / epoch=%d", fork.CurrentVersion, fork.Epoch)
 		switch fork.CurrentVersion {
 		case api.opts.EthNetDetails.BellatrixForkVersionHex:
 			api.bellatrixEpoch = fork.Epoch
@@ -355,12 +365,18 @@ func (api *RelayAPI) StartServer() (err error) {
 		}
 	}
 
+	// Helpers
 	currentSlot := bestSyncStatus.HeadSlot
 	currentEpoch := currentSlot / uint64(common.SlotsPerEpoch)
+
+	// Print fork version information
 	if api.isCapella(currentSlot) {
-		api.log.Infof("capella fork detected, startEpoch: %d / currentEpoch: %d", api.capellaEpoch, currentEpoch)
+		api.log.Infof("capella fork detected (currentEpoch: %d / bellatrixEpoch: %d / capellaEpoch: %d)", currentEpoch, api.bellatrixEpoch, api.capellaEpoch)
 	} else if api.isBellatrix(currentSlot) {
-		api.log.Infof("bellatrix fork detected. capellaStartEpoch: %d / currentEpoch: %d", api.capellaEpoch, currentEpoch)
+		api.log.Infof("bellatrix fork detected (currentEpoch: %d / bellatrixEpoch: %d / capellaEpoch: %d)", currentEpoch, api.bellatrixEpoch, api.capellaEpoch)
+		if api.capellaEpoch == 0 {
+			api.log.Infof("no capella fork scheduled. update your beacon-node in time.")
+		}
 	} else {
 		return ErrMismatchedForkVersions
 	}
@@ -472,7 +488,12 @@ func (api *RelayAPI) simulateBlock(ctx context.Context, opts blockSimOptions) er
 		"duration":   time.Since(t).Seconds(),
 		"numWaiting": api.blockSimRateLimiter.currentCounter(),
 	})
-	if simErr != nil && simErr.Error() != ErrBlockAlreadyKnown {
+	if simErr != nil &&
+		simErr.Error() != ErrBlockAlreadyKnown &&
+		simErr.Error() != ErrBlockRequiresReorg &&
+		!strings.Contains(simErr.Error(), ErrMissingTrieNode) {
+		// Mark builder as non-optimistic.
+		opts.builder.status.IsOptimistic = false
 		log.WithError(simErr).Error("block validation failed")
 		return simErr
 	}
@@ -508,12 +529,13 @@ func (api *RelayAPI) demoteBuilder(pubkey string, req *common.BuilderSubmitBlock
 
 // processOptimisticBlock is called on a new goroutine when a optimistic block
 // needs to be simulated.
-func (api *RelayAPI) processOptimisticBlock(ctx context.Context, opts blockSimOptions) {
+func (api *RelayAPI) processOptimisticBlock(opts blockSimOptions) {
 	api.optimisticBlocksInFlight += 1
 	defer func() { api.optimisticBlocksInFlight -= 1 }()
 	api.optimisticBlocks.Add(1)
 	defer api.optimisticBlocks.Done()
 
+	ctx := context.Background()
 	builderPubkey := opts.req.BuilderPubkey().String()
 	opts.log.WithFields(logrus.Fields{
 		"builderPubkey": builderPubkey,
@@ -1252,9 +1274,11 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	if api.isCapella(currentSlot) && payload.Capella == nil {
 		log.Info("rejecting submission - non capella payload for capella fork")
 		api.RespondError(w, http.StatusBadRequest, "not capella payload")
+		return
 	} else if api.isBellatrix(currentSlot) && payload.Bellatrix == nil {
 		log.Info("rejecting submission - non bellatrix payload for bellatrix fork")
 		api.RespondError(w, http.StatusBadRequest, "not belltrix payload")
+		return
 	}
 
 	nextTime = time.Now().UTC()
@@ -1442,6 +1466,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	opts := blockSimOptions{
 		isHighPrio: builderEntry.status.IsHighPrio,
 		log:        log,
+		builder:    builderEntry,
 		req: &BuilderBlockValidationRequest{
 			BuilderSubmitBlockRequest: *payload,
 			RegisteredGasLimit:        slotDuty.GasLimit,
@@ -1453,7 +1478,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 		builderEntry.status.IsOptimistic &&
 		payload.Slot() == api.optimisticSlot {
 		optimisticSubmission = true
-		go api.processOptimisticBlock(req.Context(), opts)
+		go api.processOptimisticBlock(opts)
 	} else {
 		// Simulate block (synchronously).
 		simErr = api.simulateBlock(req.Context(), opts)
@@ -1560,47 +1585,51 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 func (api *RelayAPI) handleInternalBuilderStatus(w http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	builderPubkey := vars["pubkey"]
-
-	if req.Method == http.MethodGet {
-		builderEntry, err := api.db.GetBlockBuilderByPubkey(builderPubkey)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				api.RespondError(w, http.StatusBadRequest, "builder not found")
-				return
-			}
-
-			api.log.WithError(err).Error("could not get block builder")
-			api.RespondError(w, http.StatusInternalServerError, err.Error())
+	builderEntry, err := api.db.GetBlockBuilderByPubkey(builderPubkey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			api.RespondError(w, http.StatusBadRequest, "builder not found")
 			return
 		}
 
+		api.log.WithError(err).Error("could not get block builder")
+		api.RespondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.Method == http.MethodGet {
 		api.RespondOK(w, builderEntry)
 		return
 	} else if req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch {
-		args := req.URL.Query()
+		st := common.BuilderStatus{
+			IsHighPrio:    builderEntry.IsHighPrio,
+			IsBlacklisted: builderEntry.IsBlacklisted,
+			IsOptimistic:  builderEntry.IsOptimistic,
+		}
 		trueStr := "true"
-		isHighPrio := args.Get("high_prio") == trueStr
-		isBlacklisted := args.Get("blacklisted") == trueStr
-		isOptimistic := args.Get("optimistic") == trueStr
+		args := req.URL.Query()
+		if args.Get("high_prio") != "" {
+			st.IsHighPrio = args.Get("high_prio") == trueStr
+		}
+		if args.Get("blacklisted") != "" {
+			st.IsBlacklisted = args.Get("blacklisted") == trueStr
+		}
+		if args.Get("optimistic") != "" {
+			st.IsOptimistic = args.Get("optimistic") == trueStr
+		}
 		api.log.WithFields(logrus.Fields{
 			"builderPubkey": builderPubkey,
-			"isHighPrio":    isHighPrio,
-			"isBlacklisted": isBlacklisted,
-			"isOptimistic":  isOptimistic,
+			"isHighPrio":    st.IsHighPrio,
+			"isBlacklisted": st.IsBlacklisted,
+			"isOptimistic":  st.IsOptimistic,
 		}).Info("updating builder status")
-		newStatus := common.BuilderStatus{
-			IsHighPrio:    isHighPrio,
-			IsBlacklisted: isBlacklisted,
-			IsOptimistic:  isOptimistic,
-		}
-		err := api.db.SetBlockBuilderStatus(builderPubkey, newStatus)
+		err := api.db.SetBlockBuilderStatus(builderPubkey, st)
 		if err != nil {
 			err := fmt.Errorf("error setting builder: %v status: %v", builderPubkey, err)
 			api.log.Error(err)
 			api.RespondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		api.RespondOK(w, newStatus)
+		api.RespondOK(w, st)
 	}
 }
 
