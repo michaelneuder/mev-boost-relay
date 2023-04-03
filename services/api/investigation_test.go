@@ -26,67 +26,59 @@ const (
 	proposerPubkey = "0x960c2f877337b81561b7cfbfb22e4d60599a37aa3590b9f5f9dd3d363d22a964f02d4e8eb86704b06aa5f8516e34d199"
 )
 
-func TestSignature1(t *testing.T) {
-	d, err := common.NewEthNetworkDetails("mainnet")
-	require.Nil(t, err)
-
-	var pRoot1, sRoot1, bRoot1 boostTypes.Hash
-	err = pRoot1.UnmarshalText([]byte(parentRoot1))
-	require.NoError(t, err)
-	err = sRoot1.UnmarshalText([]byte(stateRoot1))
-	require.NoError(t, err)
-	err = bRoot1.UnmarshalText([]byte(bodyRoot1))
-	require.NoError(t, err)
-
-	var sig1 boostTypes.Signature
-	err = sig1.UnmarshalText([]byte(signature1))
-	require.NoError(t, err)
-
-	h := &boostTypes.BeaconBlockHeader{
-		Slot:          6137846,
-		ProposerIndex: 552061,
-		ParentRoot:    pRoot1,
-		StateRoot:     sRoot1,
-		BodyRoot:      bRoot1,
+func TestConflictingSignatures(t *testing.T) {
+	cases := []struct {
+		parent    string
+		state     string
+		body      string
+		signature string
+	}{
+		{
+			parent:    parentRoot1,
+			state:     stateRoot1,
+			body:      bodyRoot1,
+			signature: signature1,
+		},
+		{
+			parent:    parentRoot2,
+			state:     stateRoot2,
+			body:      bodyRoot2,
+			signature: signature2,
+		},
 	}
-	pk, err := boostTypes.HexToPubkey(proposerPubkey)
-	require.Nil(t, err)
 
-	ok, err := boostTypes.VerifySignature(h, d.DomainBeaconProposerBellatrix, pk[:], sig1[:])
-	require.Nil(t, err)
-	require.True(t, ok)
-}
+	for _, tc := range cases {
+		t.Run("verify", func(t *testing.T) {
+			d, err := common.NewEthNetworkDetails("mainnet")
+			require.Nil(t, err)
 
-func TestSignature2(t *testing.T) {
-	d, err := common.NewEthNetworkDetails("mainnet")
-	require.Nil(t, err)
+			var pRoot, sRoot, bRoot boostTypes.Hash
+			err = pRoot.UnmarshalText([]byte(tc.parent))
+			require.NoError(t, err)
+			err = sRoot.UnmarshalText([]byte(tc.state))
+			require.NoError(t, err)
+			err = bRoot.UnmarshalText([]byte(tc.body))
+			require.NoError(t, err)
 
-	// From https://beaconcha.in/slot/6137846#overview.
-	var pRoot2, sRoot2, bRoot2 boostTypes.Hash
-	err = pRoot2.UnmarshalText([]byte(parentRoot2))
-	require.NoError(t, err)
-	err = sRoot2.UnmarshalText([]byte(stateRoot2))
-	require.NoError(t, err)
-	err = bRoot2.UnmarshalText([]byte(bodyRoot2))
-	require.NoError(t, err)
+			var sig boostTypes.Signature
+			err = sig.UnmarshalText([]byte(tc.signature))
+			require.NoError(t, err)
 
-	var sig2 boostTypes.Signature
-	err = sig2.UnmarshalText([]byte(signature2))
-	require.NoError(t, err)
+			h := &boostTypes.BeaconBlockHeader{
+				Slot:          6137846,
+				ProposerIndex: 552061,
+				ParentRoot:    pRoot,
+				StateRoot:     sRoot,
+				BodyRoot:      bRoot,
+			}
+			pk, err := boostTypes.HexToPubkey(proposerPubkey)
+			require.Nil(t, err)
 
-	h := &boostTypes.BeaconBlockHeader{
-		Slot:          6137846,
-		ProposerIndex: 552061,
-		ParentRoot:    pRoot2,
-		StateRoot:     sRoot2,
-		BodyRoot:      bRoot2,
+			ok, err := boostTypes.VerifySignature(h, d.DomainBeaconProposerBellatrix, pk[:], sig[:])
+			require.Nil(t, err)
+			require.True(t, ok)
+		})
 	}
-	pk, err := boostTypes.HexToPubkey(proposerPubkey)
-	require.Nil(t, err)
-
-	ok, err := boostTypes.VerifySignature(h, d.DomainBeaconProposerBellatrix, pk[:], sig2[:])
-	require.Nil(t, err)
-	require.True(t, ok)
 }
 
 func TestConstructSlashing(t *testing.T) {
