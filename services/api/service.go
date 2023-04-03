@@ -923,6 +923,14 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 
 	log.Debug("getPayload request received")
 
+	slotBoundary := api.genesisInfo.Data.GenesisTime + ((payload.Slot() + 1) * 12)
+	currTime := uint64(time.Now().Unix())
+	if currTime >= slotBoundary {
+		log.WithField("time", currTime).Error("timestamp too late")
+		api.RespondError(w, http.StatusBadRequest, "timestamp too late")
+		return
+	}
+
 	proposerPubkey, found := api.datastore.GetKnownValidatorPubkeyByIndex(payload.ProposerIndex())
 	if !found {
 		log.Errorf("could not find proposer pubkey for index %d", payload.ProposerIndex())
@@ -982,14 +990,6 @@ func (api *RelayAPI) handleGetPayload(w http.ResponseWriter, req *http.Request) 
 	if err != nil {
 		log.WithError(err).WithField("code", code).Error("failed to publish block")
 		api.RespondError(w, http.StatusBadRequest, "failed to publish block")
-		return
-	}
-
-	expectedTimestamp := api.genesisInfo.Data.GenesisTime + ((payload.Slot() + 1) * 12)
-	currTime := uint64(time.Now().Unix())
-	if currTime >= expectedTimestamp {
-		log.WithField("time", currTime).Error("timestamp too late")
-		api.RespondError(w, http.StatusBadRequest, "timestamp too late")
 		return
 	}
 
