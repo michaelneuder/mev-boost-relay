@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	boostTypes "github.com/flashbots/go-boost-utils/types"
@@ -10,25 +11,134 @@ import (
 )
 
 const (
+	// from relay database.
+	parentRoot1 = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	stateRoot1  = "0x0000000000000000000000000000000000000000000000000000000000000000"
+	bodyRoot1   = "0x82710f9c7025617ac3ef1f722451c05046ea01d525d60b7594669e63080e5db7"
+	signature1  = "0xb544eaa34654372143d0442fbba6713d978f780da85503b2a070998970867b4936e884c9f948d51c6e08f6c927f0cd4d0a334e4f04404876e08863e73d8add1b3949fd911eb386fa24ea4c1dc062564b0af8a2f95e8940737f958c8baa584cd6"
+
+	// from https://beaconcha.in/slot/6137846#overview
+	parentRoot2 = "0x873f73baa696664b8b73b160e7cfe352a924238935324007086e93a158b6e23d"
+	stateRoot2  = "0xfad223f846ec0798c8a128e52ded70c02eeda3bdcf733db7ee77b0f02a46cef9"
+	bodyRoot2   = "0xe8b27e1cb99c74d0a39d19a573743426aba74cca872b3fc44115113c669d5a96"
+	signature2  = "0x90f6920c78ed00a06affa06231780b9ad632b54ee2e1a6531e3881c9a96f47dadfba648566cdd684386df19150a9b6eb18a11e79f3d71e5fc85c7af81dd5fcd92f8ddbc870e526caed49c48ebc426489abc1efc64e3c7a14541b558877309141"
+
 	proposerPubkey = "0x960c2f877337b81561b7cfbfb22e4d60599a37aa3590b9f5f9dd3d363d22a964f02d4e8eb86704b06aa5f8516e34d199"
-	signed         = `{"message":{"slot":"6137846","proposer_index":"552061","parent_root":"0x0000000000000000000000000000000000000000000000000000000000000000","state_root":"0x0000000000000000000000000000000000000000000000000000000000000000","body":{"randao_reveal":"0xb174ccab699335097701dad2b92948cd213d056a91d63dbeed8fc2148d1723a8aaaf1e4099eb58954f493f72310fc18d04728165296563b54b7b9e6776cb0deee409573df1bee3052e24560b0f3a6dbd7ccd00d570711e961388bcf0238d8998","eth1_data":{"deposit_root":"0x0000000000000000000000000000000000000000000000000000000000000000","deposit_count":"0","block_hash":"0x0000000000000000000000000000000000000000000000000000000000000000"},"graffiti":"0x0000000000000000000000000000000000000000000000000000000000000000","proposer_slashings":[],"attester_slashings":[],"attestations":[],"deposits":[],"voluntary_exits":[],"sync_aggregate":{"sync_committee_bits":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","sync_committee_signature":"0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"},"execution_payload_header":{"parent_hash":"0x99151b8bd4ac95f5ff378591b1b8228754c8056700f60919966a3bbb966918b8","fee_recipient":"0x0000000000000000000000000000000000000000","state_root":"0x263ac177f4b1e4095bd445ee706cfcdda401d0b2da4dc98296f6142c00cdfa6f","receipts_root":"0x5a544545548387e6db411264b745b2cb853f65ad5ba5bd2d04d9d4e60826c212","logs_bloom":"0x66ea21200c848263b0240c21840106e54311048e08222c64504d16a12141a4a02614470986899820238193028c4a013492010117d88e28018201e00813b238050a52849ae896088cb92367c8f218293185a0208a82d8481049081e20f190080c9fa20506238a00270095851d494228a9d71186048151041c560201510e1e80dcb1442254c3440861a94781c00767112609804005a718e20c5228404a431a2b1a8b48e9c103827565731e08d659be0c804ec32881238032124233261ec6ef2014463604260108416a8c8262a201cc3cc04180caaa9c2828d8889104e21808a040c077274b81c24a3c5a8d0088248bb6b2c0389030c22e00701045398480385115","prev_randao":"0xb4a0e152004f423e2f554b8eb5dbdd512bb3698405d19f5d07dfe87d5106f7ed","block_number":"16964664","gas_limit":"30000000","gas_used":"12349025","timestamp":"1680478175","extra_data":"0x6279206275696c64657230783639","base_fee_per_gas":"16720166622","block_hash":"0xe394671c771f5ab3fd7ea3dd61b527cf8c481e90acca1afaa29aa2bb81069452","transactions_root":"0x3c1ca26ccbd732ec6f94fc4d539d6ff0e3694b79db7058ab16d412b983a3caad"}}},"signature":"0xb544eaa34654372143d0442fbba6713d978f780da85503b2a070998970867b4936e884c9f948d51c6e08f6c927f0cd4d0a334e4f04404876e08863e73d8add1b3949fd911eb386fa24ea4c1dc062564b0af8a2f95e8940737f958c8baa584cd6"}`
 )
 
-func TestSignature(t *testing.T) {
+func TestSignature1(t *testing.T) {
 	d, err := common.NewEthNetworkDetails("mainnet")
 	require.Nil(t, err)
 
-	bellatrix := new(boostTypes.SignedBlindedBeaconBlock)
-	err = json.Unmarshal([]byte(signed), &bellatrix)
-	require.Nil(t, err)
+	var pRoot1, sRoot1, bRoot1 boostTypes.Hash
+	err = pRoot1.UnmarshalText([]byte(parentRoot1))
+	require.NoError(t, err)
+	err = sRoot1.UnmarshalText([]byte(stateRoot1))
+	require.NoError(t, err)
+	err = bRoot1.UnmarshalText([]byte(bodyRoot1))
+	require.NoError(t, err)
 
-	payload := new(common.SignedBlindedBeaconBlock)
-	payload.Bellatrix = bellatrix
+	var sig1 boostTypes.Signature
+	err = sig1.UnmarshalText([]byte(signature1))
+	require.NoError(t, err)
 
+	h := &boostTypes.BeaconBlockHeader{
+		Slot:          6137846,
+		ProposerIndex: 552061,
+		ParentRoot:    pRoot1,
+		StateRoot:     sRoot1,
+		BodyRoot:      bRoot1,
+	}
 	pk, err := boostTypes.HexToPubkey(proposerPubkey)
 	require.Nil(t, err)
 
-	ok, err := boostTypes.VerifySignature(payload.Message(), d.DomainBeaconProposerBellatrix, pk[:], payload.Signature())
+	ok, err := boostTypes.VerifySignature(h, d.DomainBeaconProposerBellatrix, pk[:], sig1[:])
 	require.Nil(t, err)
 	require.True(t, ok)
+}
+
+func TestSignature2(t *testing.T) {
+	d, err := common.NewEthNetworkDetails("mainnet")
+	require.Nil(t, err)
+
+	// From https://beaconcha.in/slot/6137846#overview.
+	var pRoot2, sRoot2, bRoot2 boostTypes.Hash
+	err = pRoot2.UnmarshalText([]byte(parentRoot2))
+	require.NoError(t, err)
+	err = sRoot2.UnmarshalText([]byte(stateRoot2))
+	require.NoError(t, err)
+	err = bRoot2.UnmarshalText([]byte(bodyRoot2))
+	require.NoError(t, err)
+
+	var sig2 boostTypes.Signature
+	err = sig2.UnmarshalText([]byte(signature2))
+	require.NoError(t, err)
+
+	h := &boostTypes.BeaconBlockHeader{
+		Slot:          6137846,
+		ProposerIndex: 552061,
+		ParentRoot:    pRoot2,
+		StateRoot:     sRoot2,
+		BodyRoot:      bRoot2,
+	}
+	pk, err := boostTypes.HexToPubkey(proposerPubkey)
+	require.Nil(t, err)
+
+	ok, err := boostTypes.VerifySignature(h, d.DomainBeaconProposerBellatrix, pk[:], sig2[:])
+	require.Nil(t, err)
+	require.True(t, ok)
+}
+
+func TestConstructSlashing(t *testing.T) {
+	var pRoot1, sRoot1, bRoot1 boostTypes.Hash
+	err := pRoot1.UnmarshalText([]byte(parentRoot1))
+	require.NoError(t, err)
+	err = sRoot1.UnmarshalText([]byte(stateRoot1))
+	require.NoError(t, err)
+	err = bRoot1.UnmarshalText([]byte(bodyRoot1))
+	require.NoError(t, err)
+
+	var sig1 boostTypes.Signature
+	err = sig1.UnmarshalText([]byte(signature1))
+	require.NoError(t, err)
+
+	// From https://beaconcha.in/slot/6137846#overview.
+	var pRoot2, sRoot2, bRoot2 boostTypes.Hash
+	err = pRoot2.UnmarshalText([]byte(parentRoot2))
+	require.NoError(t, err)
+	err = sRoot2.UnmarshalText([]byte(stateRoot2))
+	require.NoError(t, err)
+	err = bRoot2.UnmarshalText([]byte(bodyRoot2))
+	require.NoError(t, err)
+
+	var sig2 boostTypes.Signature
+	err = sig2.UnmarshalText([]byte(signature2))
+	require.NoError(t, err)
+
+	slashing := boostTypes.ProposerSlashing{
+		A: &boostTypes.SignedBeaconBlockHeader{
+			Header: &boostTypes.BeaconBlockHeader{
+				Slot:          6137846,
+				ProposerIndex: 552061,
+				ParentRoot:    pRoot1,
+				StateRoot:     sRoot1,
+				BodyRoot:      bRoot1,
+			},
+			Signature: sig1,
+		},
+		B: &boostTypes.SignedBeaconBlockHeader{
+			Header: &boostTypes.BeaconBlockHeader{
+				Slot:          6137846,
+				ProposerIndex: 552061,
+				ParentRoot:    pRoot2,
+				StateRoot:     sRoot2,
+				BodyRoot:      bRoot2,
+			},
+			Signature: sig2,
+		},
+	}
+
+	out, err := json.MarshalIndent(slashing, "", " ")
+	require.Nil(t, err)
+	fmt.Printf("%v\n", string(out))
 }
