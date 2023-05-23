@@ -1827,6 +1827,7 @@ func (api *RelayAPI) handleSubmitNewBlock(w http.ResponseWriter, req *http.Reque
 	if builderEntry.status.IsOptimistic &&
 		builderEntry.collateral.Cmp(payload.Value()) >= 0 &&
 		payload.Slot() == api.optimisticSlot.Load() {
+		optimisticSubmission = true
 		go api.processOptimisticBlock(opts)
 	} else {
 		// Simulate block (synchronously).
